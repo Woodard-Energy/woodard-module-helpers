@@ -46,9 +46,19 @@ def create_module(
             "--template", TEMPLATE_REPO,
             "--description", description or f"{display_name} module",
         ])
+    except CommandError as e:
+        typer.echo(f"gh repo create failed: {e.stderr}", err=True)
+        raise typer.Exit(code=1) from e
+
+    try:
         run(["gh", "repo", "clone", full])
     except CommandError as e:
-        typer.echo(f"gh failed: {e.stderr}", err=True)
+        typer.echo(
+            f"gh repo clone failed: {e.stderr}\n"
+            f"Note: {full} was created on GitHub — delete it manually if "
+            "you intend to retry with the same name.",
+            err=True,
+        )
         raise typer.Exit(code=1) from e
 
     repo = Path(slug)
@@ -81,23 +91,24 @@ def _patch_placeholders(
 
     mod_yaml = repo / "module.yaml"
     if mod_yaml.exists():
-        text = mod_yaml.read_text()
-        # Replace display_name before name to avoid substring collision
+        text = mod_yaml.read_text(encoding="utf-8")
+        # Replace display_name first so "name: REPLACE_ME" doesn't collide
+        # with the substring "name: REPLACE_ME" inside "display_name: REPLACE_ME".
         text = text.replace(
             "display_name: REPLACE_ME", f"display_name: {display_name}"
         )
         text = text.replace("name: REPLACE_ME", f"name: {name}")
         text = text.replace("domain: REPLACE_ME", f"domain: {domain}")
-        mod_yaml.write_text(text)
+        mod_yaml.write_text(text, encoding="utf-8")
 
     pyproj = repo / "pyproject.toml"
     if pyproj.exists():
-        text = pyproj.read_text()
+        text = pyproj.read_text(encoding="utf-8")
         text = text.replace('name = "REPLACE_ME"', f'name = "{slug}"')
-        pyproj.write_text(text)
+        pyproj.write_text(text, encoding="utf-8")
 
     claude = repo / ".claude" / "CLAUDE.md"
     if claude.exists():
-        text = claude.read_text()
+        text = claude.read_text(encoding="utf-8")
         text = text.replace("# Module: REPLACE_ME", f"# Module: {display_name}")
-        claude.write_text(text)
+        claude.write_text(text, encoding="utf-8")

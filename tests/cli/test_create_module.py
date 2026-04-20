@@ -70,12 +70,18 @@ def test_happy_path_runs_expected_commands(_fake_shell, tmp_path, monkeypatch):
 
 
 def test_patches_module_yaml_with_inputs(tmp_path, monkeypatch, mocker):
-    """Simulate a cloned repo with template placeholders; verify patching."""
+    """Simulate a cloned repo with template placeholders; verify patching.
+
+    Fixture intentionally puts `display_name:` before `name:` so the
+    substring-collision path is exercised. Without the display_name-first
+    ordering in _patch_placeholders, `str.replace("name: REPLACE_ME", ...)`
+    would corrupt the `display_name: REPLACE_ME` line.
+    """
     monkeypatch.chdir(tmp_path)
     repo_dir = tmp_path / "geology-well-lookup"
     repo_dir.mkdir()
     (repo_dir / "module.yaml").write_text(
-        "name: REPLACE_ME\ndomain: REPLACE_ME\ndisplay_name: REPLACE_ME\n"
+        "display_name: REPLACE_ME\nname: REPLACE_ME\ndomain: REPLACE_ME\n"
     )
     (repo_dir / "pyproject.toml").write_text(
         '[project]\nname = "REPLACE_ME"\n'
@@ -96,9 +102,13 @@ def test_patches_module_yaml_with_inputs(tmp_path, monkeypatch, mocker):
     assert r.exit_code == 0, r.stdout
 
     mod_yaml = (repo_dir / "module.yaml").read_text()
+    # Must have the correct values AND display_name line must not be corrupted.
+    assert "display_name: Well Lookup" in mod_yaml
     assert "name: well-lookup" in mod_yaml
     assert "domain: geology" in mod_yaml
-    assert "display_name: Well Lookup" in mod_yaml
+    # Regression guard: the collision bug would produce "diswell-lookupay_name: ..."
+    assert "diswell-lookupay_name" not in mod_yaml
+
     pyproj = (repo_dir / "pyproject.toml").read_text()
     assert 'name = "geology-well-lookup"' in pyproj
     claude = (repo_dir / ".claude" / "CLAUDE.md").read_text()
