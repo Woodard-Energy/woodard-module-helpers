@@ -5,6 +5,7 @@ import httpx
 import typer
 
 from woodard_module_helpers.cli import app
+from woodard_module_helpers.cli._output import echo, emit_error, emit_success
 from woodard_module_helpers.cli._shell import CommandError, run
 
 DEV_BASE = "https://wip-dev.woodardenergy.com"
@@ -19,54 +20,61 @@ def push_dev(
     message: str = typer.Option("wip", "--message", "-m"),
     skip_tests: bool = typer.Option(False, "--skip-tests"),
     poll_timeout: int = typer.Option(120, "--poll-timeout"),
+    json_output: bool = typer.Option(False, "--json"),
 ) -> None:
     """Run tests locally, commit, push to dev, and poll dev slot health."""
+    verb = "push-dev"
     slug, domain, version = _read_module_yaml()
     module_name = slug.split("-", 1)[1]
 
     if not skip_tests:
-        typer.echo("Running local tests...")
+        echo("Running local tests...", json_output=json_output)
         try:
             run(["uv", "run", "pytest", "-q"])
         except CommandError as e:
-            typer.echo(f"✗ tests failed, not pushing:\n{e.stderr}", err=True)
-            raise typer.Exit(code=1) from e
+            emit_error(
+                verb, f"tests failed, not pushing: {e.stderr}",
+                json_output=json_output,
+            )
 
-    typer.echo("Committing + pushing to dev...")
+    echo("Committing + pushing to dev...", json_output=json_output)
     try:
         run(["git", "add", "-A"])
-        # commit may exit non-zero if nothing to commit; tolerate with check=False.
         run(["git", "commit", "-m", message], check=False)
         run(["git", "push", "origin", "dev"])
     except CommandError as e:
-        typer.echo(f"git failed: {e.stderr}", err=True)
-        raise typer.Exit(code=1) from e
+        emit_error(verb, f"git failed: {e.stderr}", json_output=json_output)
 
     health_url = f"{DEV_BASE}/{domain}/{module_name}/_health"
     dev_url = f"{DEV_BASE}/{domain}/{module_name}/"
-    typer.echo(f"Polling {health_url} for version {version}...")
+    echo(
+        f"Polling {health_url} for version {version}...",
+        json_output=json_output,
+    )
 
     try:
         result = _poll_health(
             health_url, expected_version=version, timeout_s=poll_timeout
         )
     except HealthPollTimeout as e:
-        typer.echo(
-            f"✗ timed out after {poll_timeout}s waiting for version {version}",
-            err=True,
-        )
-        raise typer.Exit(code=1) from e
+        emit_error(verb, str(e), json_output=json_output)
 
-    typer.echo(f"✓ dev slot healthy at version {result['version']}")
-    typer.echo(f"  {dev_url}")
+    echo(
+        f"✓ dev slot healthy at version {result['version']}",
+        json_output=json_output,
+    )
+    echo(f"  {dev_url}", json_output=json_output)
+
+    emit_success(
+        verb,
+        json_output=json_output,
+        slug=slug,
+        version=result["version"],
+        dev_url=dev_url,
+    )
 
 
 def _read_module_yaml() -> tuple[str, str, str]:
-    """Return (slug, domain, version) from ./module.yaml.
-
-    Parses a tiny YAML subset (name/domain/version lines) to avoid adding a
-    yaml dependency for three fields.
-    """
     path = Path("module.yaml")
     if not path.exists():
         typer.echo("module.yaml not found in current directory", err=True)

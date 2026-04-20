@@ -4,6 +4,7 @@ from pathlib import Path
 import typer
 
 from woodard_module_helpers.cli import app
+from woodard_module_helpers.cli._output import echo, emit_error, emit_success
 from woodard_module_helpers.cli._shell import CommandError, run
 
 VALID_DOMAINS = ("drilling", "geology", "land", "midstream", "reserves")
@@ -17,28 +18,30 @@ def create_module(
     name: str = typer.Option(..., "--name", "-n"),
     display_name: str = typer.Option(..., "--display-name"),
     description: str = typer.Option("", "--description"),
+    json_output: bool = typer.Option(False, "--json"),
 ) -> None:
-    """Scaffold a new platform module from the template.
+    """Scaffold a new platform module from the template."""
+    verb = "create-module"
 
-    Creates woodard-energy/<domain>-<name>, clones locally, patches placeholder
-    fields, commits, and pushes to the dev branch.
-    """
     if domain not in VALID_DOMAINS:
-        typer.echo(
-            f"domain must be one of {VALID_DOMAINS}, got {domain!r}", err=True
+        emit_error(
+            verb,
+            f"domain must be one of {VALID_DOMAINS}, got {domain!r}",
+            json_output=json_output,
+            exit_code=2,
         )
-        raise typer.Exit(code=2)
     if not KEBAB_RE.match(name):
-        typer.echo(
-            f"name must be kebab-case (lowercase, hyphens), got {name!r}",
-            err=True,
+        emit_error(
+            verb,
+            f"name must be kebab-case, got {name!r}",
+            json_output=json_output,
+            exit_code=2,
         )
-        raise typer.Exit(code=2)
 
     slug = f"{domain}-{name}"
     full = f"woodard-energy/{slug}"
+    echo(f"Creating {full} from template {TEMPLATE_REPO}...", json_output=json_output)
 
-    typer.echo(f"Creating {full} from template {TEMPLATE_REPO}...")
     try:
         run([
             "gh", "repo", "create", full,
@@ -47,22 +50,25 @@ def create_module(
             "--description", description or f"{display_name} module",
         ])
     except CommandError as e:
-        typer.echo(f"gh repo create failed: {e.stderr}", err=True)
-        raise typer.Exit(code=1) from e
+        emit_error(
+            verb, f"gh repo create failed: {e.stderr}",
+            json_output=json_output,
+        )
 
     try:
         run(["gh", "repo", "clone", full])
     except CommandError as e:
-        typer.echo(
-            f"gh repo clone failed: {e.stderr}\n"
-            f"Note: {full} was created on GitHub — delete it manually if "
-            "you intend to retry with the same name.",
-            err=True,
+        emit_error(
+            verb,
+            f"gh repo clone failed: {e.stderr}. "
+            f"Note: {full} was created on GitHub — delete it manually to retry.",
+            json_output=json_output,
         )
-        raise typer.Exit(code=1) from e
 
     repo = Path(slug)
-    _patch_placeholders(repo, domain=domain, name=name, display_name=display_name)
+    _patch_placeholders(
+        repo, domain=domain, name=name, display_name=display_name
+    )
 
     try:
         run(["git", "checkout", "-B", "dev"], cwd=repo)
@@ -70,18 +76,29 @@ def create_module(
         run(["git", "commit", "-m", "Initial scaffold"], cwd=repo)
         run(["git", "push", "-u", "origin", "dev"], cwd=repo)
     except CommandError as e:
-        typer.echo(f"git failed: {e.stderr}", err=True)
-        raise typer.Exit(code=1) from e
+        emit_error(verb, f"git failed: {e.stderr}", json_output=json_output)
 
-    typer.echo("")
-    typer.echo(f"✓ Created {full}")
-    typer.echo(f"  Local path: {repo.resolve()}")
-    typer.echo("")
-    typer.echo("Next steps:")
-    typer.echo(f"  1. cd {slug}")
-    typer.echo("  2. Open a PR to register this module in the shell manifest")
-    typer.echo("     (modules.yaml in intelligence-platform repo)")
-    typer.echo("  3. Run `woodard-cli push-dev` after adding your first real code")
+    echo("", json_output=json_output)
+    echo(f"✓ Created {full}", json_output=json_output)
+    echo(f"  Local path: {repo.resolve()}", json_output=json_output)
+    echo("", json_output=json_output)
+    echo("Next steps:", json_output=json_output)
+    echo(f"  1. cd {slug}", json_output=json_output)
+    echo(
+        "  2. Open a PR to register this module in the shell manifest",
+        json_output=json_output,
+    )
+    echo("  3. Run `woodard-cli push-dev` after your first real commit", json_output=json_output)
+
+    emit_success(
+        verb,
+        json_output=json_output,
+        slug=slug,
+        repo=full,
+        local_path=str(repo.resolve()),
+        domain=domain,
+        name=name,
+    )
 
 
 def _patch_placeholders(
@@ -92,8 +109,6 @@ def _patch_placeholders(
     mod_yaml = repo / "module.yaml"
     if mod_yaml.exists():
         text = mod_yaml.read_text(encoding="utf-8")
-        # Replace display_name first so "name: REPLACE_ME" doesn't collide
-        # with the substring "name: REPLACE_ME" inside "display_name: REPLACE_ME".
         text = text.replace(
             "display_name: REPLACE_ME", f"display_name: {display_name}"
         )
@@ -110,5 +125,7 @@ def _patch_placeholders(
     claude = repo / ".claude" / "CLAUDE.md"
     if claude.exists():
         text = claude.read_text(encoding="utf-8")
-        text = text.replace("# Module: REPLACE_ME", f"# Module: {display_name}")
+        text = text.replace(
+            "# Module: REPLACE_ME", f"# Module: {display_name}"
+        )
         claude.write_text(text, encoding="utf-8")

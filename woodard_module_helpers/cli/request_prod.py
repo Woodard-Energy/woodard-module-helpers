@@ -3,41 +3,44 @@ from pathlib import Path
 import typer
 
 from woodard_module_helpers.cli import app
+from woodard_module_helpers.cli._output import echo, emit_error, emit_success
 from woodard_module_helpers.cli._shell import CommandError, run
 
 
 @app.command("request-prod")
-def request_prod() -> None:
-    """Open a PR from dev to main for this module.
-
-    Validates the current branch is dev + clean + pushed, then generates a
-    summary from commits on dev ahead of main and opens the PR via gh.
-    """
+def request_prod(
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Open a PR from dev to main for this module."""
+    verb = "request-prod"
     branch = run(["git", "rev-parse", "--abbrev-ref", "HEAD"]).strip()
     if branch != "dev":
-        typer.echo(
-            f"current branch is {branch!r}, must be 'dev' to request prod",
-            err=True,
+        emit_error(
+            verb,
+            f"current branch is {branch!r}, must be 'dev'",
+            json_output=json_output,
+            exit_code=2,
         )
-        raise typer.Exit(code=2)
 
     run(["git", "fetch", "origin", "dev"])
     dirty = run(["git", "status", "--porcelain"]).strip()
     if dirty:
-        typer.echo(
-            "working tree is dirty — commit or stash changes first:\n"
-            + dirty,
-            err=True,
+        emit_error(
+            verb,
+            f"working tree is dirty:\n{dirty}",
+            json_output=json_output,
+            exit_code=2,
         )
-        raise typer.Exit(code=2)
 
     commits_raw = run(["git", "log", "origin/main..dev", "--pretty=%h %s"])
     commits = [line for line in commits_raw.splitlines() if line.strip()]
     if not commits:
-        typer.echo("no commits on dev ahead of main — nothing to ship", err=True)
-        raise typer.Exit(code=2)
+        emit_error(
+            verb, "no commits on dev ahead of main",
+            json_output=json_output, exit_code=2,
+        )
 
-    slug = Path.cwd().name  # assumes working dir named <domain>-<name>
+    slug = Path.cwd().name
     n = len(commits)
     title = f"Ship {slug} to prod ({n} commit{'s' if n != 1 else ''})"
     body = _build_pr_body(slug, commits)
@@ -51,10 +54,19 @@ def request_prod() -> None:
             "--body", body,
         ]).strip()
     except CommandError as e:
-        typer.echo(f"gh pr create failed: {e.stderr}", err=True)
-        raise typer.Exit(code=1) from e
+        emit_error(
+            verb, f"gh pr create failed: {e.stderr}",
+            json_output=json_output,
+        )
 
-    typer.echo(f"✓ PR opened: {pr_url}")
+    echo(f"✓ PR opened: {pr_url}", json_output=json_output)
+    emit_success(
+        verb,
+        json_output=json_output,
+        slug=slug,
+        pr_url=pr_url,
+        commits=commits,
+    )
 
 
 def _build_pr_body(slug: str, commits: list[str]) -> str:
