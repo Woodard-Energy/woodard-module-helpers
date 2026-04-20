@@ -66,10 +66,11 @@ def test_tampered_signature_returns_anonymous(monkeypatch):
     hdrs["X-Woodard-Signature"] = "0" * 64
     r = client.get("/me", headers=hdrs)
     assert r.status_code == 200
-    assert r.json() == {"email": "anonymous", "roles": ["*"]}
+    assert r.json() == {"email": "anonymous", "roles": []}
 
 
 def test_missing_secret_returns_anonymous(monkeypatch):
+    # No secret set → ANONYMOUS_DEV with wildcard (local dev mode).
     monkeypatch.delenv("WOODARD_SIGNING_SECRET", raising=False)
     client = TestClient(_build_app())
     r = client.get("/me", headers=_hdrs("alice@example.com", ["reserves"]))
@@ -82,7 +83,7 @@ def test_missing_headers_returns_anonymous(monkeypatch):
     client = TestClient(_build_app())
     r = client.get("/me")
     assert r.status_code == 200
-    assert r.json() == {"email": "anonymous", "roles": ["*"]}
+    assert r.json() == {"email": "anonymous", "roles": []}
 
 
 def test_require_role_allows_matching(monkeypatch):
@@ -111,3 +112,24 @@ def test_require_any_role_allows_either(monkeypatch):
     client = TestClient(_build_app())
     r = client.get("/reserves-or-land", headers=_hdrs("alice@example.com", ["land"]))
     assert r.status_code == 200
+
+
+def test_tampered_signature_denied_by_role_gate(monkeypatch):
+    """Tampered sig → ANONYMOUS_DENY → role gate returns 403 (not 200)."""
+    monkeypatch.setenv("WOODARD_SIGNING_SECRET", SECRET)
+    client = TestClient(_build_app())
+    hdrs = _hdrs("alice@example.com", ["reserves"])
+    hdrs["X-Woodard-Signature"] = "0" * 64
+    r = client.get("/reserves-only", headers=hdrs)
+    assert r.status_code == 403
+
+
+def test_require_any_role_denies_missing(monkeypatch):
+    """User with no matching roles hits require_any_role → 403."""
+    monkeypatch.setenv("WOODARD_SIGNING_SECRET", SECRET)
+    client = TestClient(_build_app())
+    r = client.get(
+        "/reserves-or-land",
+        headers=_hdrs("alice@example.com", ["drilling"]),
+    )
+    assert r.status_code == 403
