@@ -36,6 +36,6 @@ def test_all_public_api_importable():
     assert wmh.Settings()
     assert callable(wmh.prefix)
     assert callable(wmh.current_user)
-    assert callable(wmh.require_role("reserves"))
-    assert callable(wmh.require_any_role("reserves", "land"))
+    assert callable(wmh.require_role("reservoir"))
+    assert callable(wmh.require_any_role("reservoir", "land"))
     assert wmh.__version__

@@ -7,7 +7,7 @@ from woodard_module_helpers.cli import app
 from woodard_module_helpers.cli._output import echo, emit_error, emit_success
 from woodard_module_helpers.cli._shell import CommandError, run
 
-VALID_DOMAINS = ("drilling", "geology", "land", "midstream", "reserves")
+VALID_DOMAINS = ("drilling", "geology", "land", "midstream", "reservoir")
 TEMPLATE_REPO = "woodard-energy/module-template"
 KEBAB_RE = re.compile(r"^[a-z][a-z0-9]*(-[a-z0-9]+)*$")
 

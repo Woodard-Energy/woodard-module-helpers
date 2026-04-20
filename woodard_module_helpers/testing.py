@@ -40,7 +40,7 @@ def woodard_test_client() -> Callable[..., httpx.AsyncClient]:
 
     Usage in a module's test:
         async def test_list(woodard_test_client, app):
-            async with woodard_test_client(app, email="t@x", roles=["reserves"]) as c:
+            async with woodard_test_client(app, email="t@x", roles=["reservoir"]) as c:
                 r = await c.get("/")
                 assert r.status_code == 200
     """

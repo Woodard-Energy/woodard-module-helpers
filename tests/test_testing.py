@@ -65,4 +65,4 @@ def test_signed_identity_headers_raises_without_secret(monkeypatch):
     """Neither explicit secret nor env var set → clear ValueError."""
     monkeypatch.delenv("WOODARD_SIGNING_SECRET", raising=False)
     with pytest.raises(ValueError, match="WOODARD_SIGNING_SECRET"):
-        signed_identity_headers("x@example.com", ["reserves"])
+        signed_identity_headers("x@example.com", ["reservoir"])
