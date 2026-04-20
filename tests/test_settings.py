@@ -1,4 +1,3 @@
-import pytest
 from woodard_module_helpers.settings import Settings
 
 
