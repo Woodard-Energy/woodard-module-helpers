@@ -13,7 +13,6 @@ def test_public_api_surface():
         "get_engine",
         "get_session",
         "session_dep",
-        "signed_identity_headers",
         "__version__",
     }
     missing = expected - set(dir(wmh))

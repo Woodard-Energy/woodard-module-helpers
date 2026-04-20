@@ -13,7 +13,6 @@ from woodard_module_helpers.identity import (
     require_role,
 )
 from woodard_module_helpers.settings import Settings
-from woodard_module_helpers.testing import signed_identity_headers
 from woodard_module_helpers.urls import prefix, setup_templates
 
 __all__ = [
@@ -29,5 +28,6 @@ __all__ = [
     "get_engine",
     "get_session",
     "session_dep",
-    "signed_identity_headers",
+    # signed_identity_headers is available via woodard_module_helpers.testing
+    # (not re-exported here to avoid a pytest hard-dependency at runtime)
 ]
