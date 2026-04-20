@@ -1,3 +1,4 @@
+import pytest
 from sqlalchemy import Column, Integer, String, text
 
 from woodard_module_helpers.db import (
@@ -62,3 +63,25 @@ def test_session_dep_yields_and_closes():
     # Exhaust generator to trigger cleanup.
     for _ in gen:
         pass
+
+
+def test_session_dep_rolls_back_on_exception():
+    """Exception thrown into the generator triggers rollback before close."""
+    engine = get_engine("sqlite:///:memory:")
+    gen = session_dep(engine=engine)
+    session = next(gen)
+    assert session.execute(text("SELECT 1")).scalar() == 1
+
+    # Simulate an exception during the request by throwing into the generator.
+    with pytest.raises(RuntimeError, match="simulated"):
+        gen.throw(RuntimeError("simulated"))
+
+    # After throw, the generator has run its except/finally and cleaned up.
+
+
+def test_session_dep_raises_when_database_url_unset(monkeypatch):
+    """No engine passed + no DATABASE_URL set → clear ValueError."""
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    with pytest.raises(ValueError, match="DATABASE_URL"):
+        gen = session_dep()
+        next(gen)

@@ -35,7 +35,12 @@ def get_session(engine: Engine) -> Generator[Session, None, None]:
 
 
 def session_dep(engine: Engine | None = None) -> Generator[Session, None, None]:
-    """FastAPI dependency — yields a session, closes after the request.
+    """FastAPI dependency — yields a session, rolls back on exception, closes.
+
+    Callers are responsible for committing. On unhandled exceptions during
+    the request, rolls back any in-progress transaction before close.
+
+    If `engine` is None, reads `DATABASE_URL` env directly (bypasses Settings).
 
     Usage:
         def _sess():
@@ -46,11 +51,19 @@ def session_dep(engine: Engine | None = None) -> Generator[Session, None, None]:
             ...
     """
     if engine is None:
-        engine = get_engine(os.environ.get("DATABASE_URL", ""))
+        url = os.environ.get("DATABASE_URL", "")
+        if not url:
+            raise ValueError(
+                "DATABASE_URL env var is not set; pass engine explicitly or set it"
+            )
+        engine = get_engine(url)
     SessionLocal = sessionmaker(bind=engine, expire_on_commit=False, future=True)
     session = SessionLocal()
     try:
         yield session
+    except Exception:
+        session.rollback()
+        raise
     finally:
         session.close()
 
@@ -63,6 +76,17 @@ class SchemaBase(DeclarativeBase):
 
     Module models inherit from this instead of DeclarativeBase. Keeps table
     metadata schema-scoped so modules share a database without colliding.
+
+    **Note:** `SQL_SCHEMA` is read once at import time. If a subclass sets its
+    own `__table_args__` (e.g. for constraints), it must include the schema
+    dict explicitly — the tuple form silently replaces, not merges:
+
+        class Well(SchemaBase):
+            __tablename__ = "wells"
+            __table_args__ = (
+                UniqueConstraint("api_number"),
+                {"schema": os.environ.get("SQL_SCHEMA", "")},  # preserve
+            )
     """
 
     __abstract__ = True
