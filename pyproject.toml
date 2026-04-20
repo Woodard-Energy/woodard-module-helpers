@@ -16,6 +16,9 @@ dependencies = [
 [project.scripts]
 woodard-cli = "woodard_module_helpers.cli:main"
 
+[project.entry-points.pytest11]
+woodard_module_helpers = "woodard_module_helpers.testing"
+
 [dependency-groups]
 dev = [
     "pytest>=8.3",
