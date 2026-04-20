@@ -51,7 +51,9 @@ def woodard_test_client() -> Callable[..., httpx.AsyncClient]:
         roles: list[str] | None = None,
         secret: str | None = None,
     ) -> httpx.AsyncClient:
-        hdrs = signed_identity_headers(email, roles or ["*"], secret=secret)
+        if roles is None:
+            roles = ["*"]
+        hdrs = signed_identity_headers(email, roles, secret=secret)
         return httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app),
             base_url="http://testserver",

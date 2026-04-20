@@ -59,3 +59,10 @@ async def test_woodard_test_client_fixture_sends_signed_headers(
         r = await c.get("/me")
         assert r.status_code == 200
         assert r.json() == {"email": "dave@example.com", "roles": ["midstream"]}
+
+
+def test_signed_identity_headers_raises_without_secret(monkeypatch):
+    """Neither explicit secret nor env var set → clear ValueError."""
+    monkeypatch.delenv("WOODARD_SIGNING_SECRET", raising=False)
+    with pytest.raises(ValueError, match="WOODARD_SIGNING_SECRET"):
+        signed_identity_headers("x@example.com", ["reserves"])
