@@ -26,6 +26,7 @@ def _root(
 
 # Verb registration — each verb module declares its own @app.command().
 from woodard_module_helpers.cli import (  # noqa: E402, F401
+    clone_module,
     convert_to_platform,
     create_module,
     push_dev,
