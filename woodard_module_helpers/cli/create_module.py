@@ -125,7 +125,12 @@ def _patch_placeholders(
     claude = repo / ".claude" / "CLAUDE.md"
     if claude.exists():
         text = claude.read_text(encoding="utf-8")
-        text = text.replace(
-            "# Module: REPLACE_ME", f"# Module: {display_name}"
-        )
+        text = text.replace("# Module: REPLACE_ME", f"# Module: {display_name}")
+        text = text.replace("**Domain:** `REPLACE_ME`", f"**Domain:** `{domain}`")
         claude.write_text(text, encoding="utf-8")
+
+    readme = repo / "README.md"
+    if readme.exists():
+        text = readme.read_text(encoding="utf-8")
+        text = text.replace("# REPLACE_ME", f"# {display_name}", 1)
+        readme.write_text(text, encoding="utf-8")

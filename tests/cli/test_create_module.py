@@ -88,8 +88,9 @@ def test_patches_module_yaml_with_inputs(tmp_path, monkeypatch, mocker):
     )
     (repo_dir / ".claude").mkdir()
     (repo_dir / ".claude" / "CLAUDE.md").write_text(
-        "# Module: REPLACE_ME\n"
+        "# Module: REPLACE_ME\n\n**Domain:** `REPLACE_ME`\n"
     )
+    (repo_dir / "README.md").write_text("# REPLACE_ME\n\nSome content.\n", encoding="utf-8")
     mocker.patch("woodard_module_helpers.cli.create_module.run", return_value="")
 
     runner = CliRunner()
@@ -111,5 +112,11 @@ def test_patches_module_yaml_with_inputs(tmp_path, monkeypatch, mocker):
 
     pyproj = (repo_dir / "pyproject.toml").read_text()
     assert 'name = "geology-well-lookup"' in pyproj
-    claude = (repo_dir / ".claude" / "CLAUDE.md").read_text()
+    claude = (repo_dir / ".claude" / "CLAUDE.md").read_text(encoding="utf-8")
     assert "# Module: Well Lookup" in claude
+    assert "**Domain:** `geology`" in claude
+    assert "REPLACE_ME" not in claude
+
+    readme = (repo_dir / "README.md").read_text(encoding="utf-8")
+    assert "# Well Lookup" in readme
+    assert "REPLACE_ME" not in readme
