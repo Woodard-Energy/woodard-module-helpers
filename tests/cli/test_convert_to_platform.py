@@ -6,6 +6,14 @@ from typer.testing import CliRunner
 from woodard_module_helpers.cli import app
 
 
+@pytest.fixture(autouse=True)
+def _mock_domains(mocker):
+    mocker.patch(
+        "woodard_module_helpers.cli.convert_to_platform.fetch_valid_domains",
+        return_value=("drilling", "geology", "land", "midstream", "reservoir"),
+    )
+
+
 @pytest.fixture
 def _source_project(tmp_path):
     src = tmp_path / "my-experiment"

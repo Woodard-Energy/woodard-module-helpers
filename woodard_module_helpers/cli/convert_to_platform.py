@@ -4,12 +4,12 @@ from pathlib import Path
 import typer
 
 from woodard_module_helpers.cli import app
+from woodard_module_helpers.cli._domains import fetch_valid_domains
 from woodard_module_helpers.cli._output import echo, emit_error, emit_success
 from woodard_module_helpers.cli._shell import CommandError, run
 from woodard_module_helpers.cli.create_module import (
     KEBAB_RE,
     TEMPLATE_REPO,
-    VALID_DOMAINS,
     _patch_placeholders,
 )
 
@@ -28,10 +28,11 @@ def convert_to_platform(
 ) -> None:
     """Promote an existing personal-use project into a platform module."""
     verb = "convert-to-platform"
+    valid_domains = fetch_valid_domains()
 
-    if domain not in VALID_DOMAINS:
+    if domain not in valid_domains:
         emit_error(
-            verb, f"domain must be one of {VALID_DOMAINS}",
+            verb, f"domain must be one of {valid_domains}",
             json_output=json_output, exit_code=2,
         )
     if not KEBAB_RE.match(name):

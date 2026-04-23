@@ -4,10 +4,10 @@ from pathlib import Path
 import typer
 
 from woodard_module_helpers.cli import app
+from woodard_module_helpers.cli._domains import fetch_valid_domains
 from woodard_module_helpers.cli._output import echo, emit_error, emit_success
 from woodard_module_helpers.cli._shell import CommandError, run
 
-VALID_DOMAINS = ("drilling", "geology", "land", "midstream", "reservoir")
 TEMPLATE_REPO = "woodard-energy/module-template"
 KEBAB_RE = re.compile(r"^[a-z][a-z0-9]*(-[a-z0-9]+)*$")
 
@@ -22,11 +22,12 @@ def create_module(
 ) -> None:
     """Scaffold a new platform module from the template."""
     verb = "create-module"
+    valid_domains = fetch_valid_domains()
 
-    if domain not in VALID_DOMAINS:
+    if domain not in valid_domains:
         emit_error(
             verb,
-            f"domain must be one of {VALID_DOMAINS}, got {domain!r}",
+            f"domain must be one of {valid_domains}, got {domain!r}",
             json_output=json_output,
             exit_code=2,
         )

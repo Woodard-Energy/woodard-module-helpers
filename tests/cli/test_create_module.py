@@ -4,6 +4,14 @@ from typer.testing import CliRunner
 from woodard_module_helpers.cli import app
 
 
+@pytest.fixture(autouse=True)
+def _mock_domains(mocker):
+    mocker.patch(
+        "woodard_module_helpers.cli.create_module.fetch_valid_domains",
+        return_value=("drilling", "geology", "land", "midstream", "reservoir"),
+    )
+
+
 @pytest.fixture
 def _fake_shell(mocker):
     """Mock _shell.run so no real subprocess calls happen."""
