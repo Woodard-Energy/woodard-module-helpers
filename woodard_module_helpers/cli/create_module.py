@@ -1,5 +1,6 @@
 import json
 import re
+import time
 from pathlib import Path
 
 import typer
@@ -11,6 +12,49 @@ from woodard_module_helpers.cli._shell import CommandError, run
 
 TEMPLATE_REPO = "woodard-energy/module-template"
 KEBAB_RE = re.compile(r"^[a-z][a-z0-9]*(-[a-z0-9]+)*$")
+
+
+def _wait_for_repo_populated(full: str, timeout_s: int = 30) -> None:
+    """Poll GitHub until `full` (owner/slug) has at least one commit on its
+    default branch. Templates from `gh repo create --template` are copied
+    asynchronously — this absorbs the delay.
+
+    Raises CommandError (which surfaces to the user via emit_error) if the
+    repo is still empty after `timeout_s` seconds.
+    """
+    deadline = time.time() + timeout_s
+    last_err: str | None = None
+    while time.time() < deadline:
+        try:
+            # Query commits on the repo's default branch. Returns a list; length 0
+            # means the repo is still empty.
+            out = run([
+                "gh", "api",
+                f"repos/{full}/commits",
+                "--jq", "length",
+            ])
+            count = int(out.strip()) if out.strip().isdigit() else 0
+            if count > 0:
+                return
+            last_err = "repo has 0 commits"
+        except CommandError as e:
+            # `gh api repos/.../commits` returns 409 Conflict if the repo is
+            # truly empty (no default branch yet). Treat that as "still waiting"
+            # rather than a hard failure.
+            last_err = e.stderr or e.stdout or str(e)
+        time.sleep(1.5)
+
+    raise CommandError(
+        ["gh", "api", f"repos/{full}/commits"],
+        returncode=1,
+        stdout="",
+        stderr=(
+            f"Timed out after {timeout_s}s waiting for template content to copy "
+            f"to {full}. Last check: {last_err}. "
+            f"Try re-running create-module — the template copy may have completed "
+            f"by now and idempotency will pick up where this left off."
+        ),
+    )
 
 
 @app.command("create-module")
@@ -109,6 +153,13 @@ def _ensure_github_repo(
                 verb, f"gh repo create failed: {e}",
                 json_output=json_output,
             )
+        # GitHub copies template content asynchronously — wait until at least one
+        # commit is visible before we proceed to clone.
+        echo(f"Waiting for template content to populate in {full}...", json_output=json_output)
+        try:
+            _wait_for_repo_populated(full)
+        except CommandError as e:
+            emit_error(verb, f"template copy timed out: {e.stderr}", json_output=json_output)
         return
 
     # Repo exists — check that it came from our template.
@@ -154,47 +205,86 @@ def _ensure_local_clone(
                 f"Note: {full} was created on GitHub — delete it manually to retry.",
                 json_output=json_output,
             )
-        return
+    else:
+        # Directory exists — must be a git repo pointing at the right remote.
+        if not (repo / ".git").exists():
+            emit_error(
+                verb,
+                f"{repo.resolve()} exists but is not a git checkout. "
+                "Refusing to write into it. Move or rename the existing dir, then re-run.",
+                json_output=json_output,
+                exit_code=2,
+            )
 
-    # Directory exists — must be a git repo pointing at the right remote.
-    if not (repo / ".git").exists():
-        emit_error(
-            verb,
-            f"{repo.resolve()} exists but is not a git checkout. "
-            "Refusing to write into it. Move or rename the existing dir, then re-run.",
+        try:
+            origin_url = run(
+                ["git", "remote", "get-url", "origin"], cwd=repo
+            ).strip().lower()
+        except CommandError:
+            emit_error(
+                verb,
+                f"{repo.resolve()} is a git repo but has no 'origin' remote. "
+                "Refusing to continue. Fix the remote manually, then re-run.",
+                json_output=json_output,
+                exit_code=2,
+            )
+            return  # unreachable; satisfies type checkers
+
+        expected = f"woodard-energy/{slug}".lower()
+        if expected not in origin_url:
+            emit_error(
+                verb,
+                f"{repo.resolve()} exists but its git remote points at {origin_url!r}, "
+                f"not woodard-energy/{slug}. Refusing to overwrite. "
+                "Move or rename the existing dir, then re-run.",
+                json_output=json_output,
+                exit_code=2,
+            )
+
+        echo(
+            f"Local clone already exists at {repo.resolve()}; resuming.",
             json_output=json_output,
-            exit_code=2,
         )
 
+    # Belt-and-suspenders: verify the clone actually has commits. Catches the
+    # race where gh repo create returned before the async template copy finished.
     try:
-        origin_url = run(
-            ["git", "remote", "get-url", "origin"], cwd=repo
-        ).strip().lower()
+        commits_raw = run(
+            ["git", "rev-list", "--count", "HEAD"], cwd=repo, check=True
+        ).strip()
+        commit_count = int(commits_raw) if commits_raw.isdigit() else 0
     except CommandError:
+        commit_count = 0
+
+    if commit_count == 0:
+        echo(
+            "Local clone has 0 commits — template may still be copying. Waiting...",
+            json_output=json_output,
+        )
+        deadline = time.time() + 30
+        while time.time() < deadline:
+            try:
+                run(["git", "fetch", "origin"], cwd=repo, check=True)
+                run(["git", "reset", "--hard", "origin/HEAD"], cwd=repo, check=True)
+                commits_raw = run(
+                    ["git", "rev-list", "--count", "HEAD"], cwd=repo, check=True
+                ).strip()
+                commit_count = int(commits_raw) if commits_raw.isdigit() else 0
+                if commit_count > 0:
+                    echo("Template content arrived; continuing.", json_output=json_output)
+                    return
+            except CommandError:
+                pass
+            time.sleep(1.5)
+
         emit_error(
             verb,
-            f"{repo.resolve()} is a git repo but has no 'origin' remote. "
-            "Refusing to continue. Fix the remote manually, then re-run.",
+            f"Local clone of {full} is still empty after 30s wait. "
+            f"Template copy may have failed on GitHub's side. Delete the empty repo "
+            f"via the GitHub UI and re-run, or wait a minute and re-run (create-module "
+            f"is idempotent and will pick up if the template eventually populates).",
             json_output=json_output,
-            exit_code=2,
         )
-        return  # unreachable; satisfies type checkers
-
-    expected = f"woodard-energy/{slug}".lower()
-    if expected not in origin_url:
-        emit_error(
-            verb,
-            f"{repo.resolve()} exists but its git remote points at {origin_url!r}, "
-            f"not woodard-energy/{slug}. Refusing to overwrite. "
-            "Move or rename the existing dir, then re-run.",
-            json_output=json_output,
-            exit_code=2,
-        )
-
-    echo(
-        f"Local clone already exists at {repo.resolve()}; resuming.",
-        json_output=json_output,
-    )
 
 
 def _ensure_dev_branch_committed_and_pushed(

@@ -71,6 +71,9 @@ def _make_smart_run(*, repo_view_raises=True, remote_url=None, dev_exists=False,
             if clone_side_effect:
                 clone_side_effect()
             return ""
+        # gh api repos/.../commits — template already populated
+        if argv[0] == "gh" and argv[1] == "api" and len(argv) > 2 and "commits" in argv[2]:
+            return "1"
         if argv[0] == "gh":
             return ""
         if argv[1] == "remote" and argv[2] == "get-url":
@@ -79,6 +82,8 @@ def _make_smart_run(*, repo_view_raises=True, remote_url=None, dev_exists=False,
             if dev_exists:
                 return "abc1234\n"
             raise CommandError(argv, 128, "", "")
+        if argv[1] == "rev-list" and "--count" in argv and "HEAD" in argv:
+            return "3\n"  # clone has commits — not stuck in race loop
         if argv[1] == "status":
             return status_output
         if argv[1] == "ls-remote":
@@ -212,6 +217,8 @@ def test_convert_resumes_when_repo_exists_from_template(
             return ""
         if argv[1] == "rev-parse" and "--verify" in argv:
             raise CommandError(argv, 128, "", "")
+        if argv[1] == "rev-list" and "--count" in argv and "HEAD" in argv:
+            return "3\n"  # clone has commits — not stuck in race loop
         if argv[1] == "status":
             return "M module.yaml\n"
         if argv[1] == "ls-remote":
@@ -294,6 +301,8 @@ def test_convert_resumes_when_local_clone_exists_with_correct_remote(
             return f"https://github.com/woodard-energy/{slug}.git\n"
         if argv[1] == "rev-parse" and "--verify" in argv:
             raise CommandError(argv, 128, "", "")
+        if argv[1] == "rev-list" and "--count" in argv and "HEAD" in argv:
+            return "3\n"  # clone has commits — not stuck in race loop
         if argv[1] == "status":
             return "M module.yaml\n"
         if argv[1] == "ls-remote":
@@ -380,6 +389,8 @@ def test_convert_skips_commit_when_nothing_to_commit(
             return f"https://github.com/woodard-energy/{slug}.git\n"
         if argv[1] == "rev-parse" and "--verify" in argv:
             raise CommandError(argv, 128, "", "")
+        if argv[1] == "rev-list" and "--count" in argv and "HEAD" in argv:
+            return "3\n"  # clone has commits — not stuck in race loop
         if argv[1] == "status":
             return ""  # clean
         if argv[1] == "commit":

@@ -27,9 +27,15 @@ def test_create_module_json_output(tmp_path, monkeypatch, mocker):
         # gh repo view → repo doesn't exist → create
         if argv[0] == "gh" and argv[1] == "repo" and argv[2] == "view":
             raise CommandError(argv, 1, "", "not found")
+        # gh api repos/.../commits — template already populated
+        if argv[0] == "gh" and argv[1] == "api" and len(argv) > 2 and "commits" in argv[2]:
+            return "1"
         # dev branch doesn't exist
         if argv[0] == "git" and argv[1] == "rev-parse" and "--verify" in argv:
             raise CommandError(argv, 128, "", "")
+        # clone has commits — not stuck in race loop
+        if argv[0] == "git" and argv[1] == "rev-list" and "--count" in argv and "HEAD" in argv:
+            return "3\n"
         # dirty working tree → commit
         if argv[0] == "git" and argv[1] == "status":
             return "M module.yaml\n"

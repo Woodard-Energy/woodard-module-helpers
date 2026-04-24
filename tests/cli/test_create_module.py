@@ -71,6 +71,9 @@ def _base_smart_run(*, repo_view_raises=True, dev_exists=False, dev_ahead=0,
             return json.dumps({
                 "templateRepository": {"full_name": "Woodard-Energy/module-template"}
             })
+        # gh api repos/.../commits — template already populated
+        if argv[0] == "gh" and argv[1] == "api" and len(argv) > 2 and "commits" in argv[2]:
+            return "1"
         if argv[0] == "gh":
             return ""
         # ── git ─────────────────────────────────────────────────────────────
@@ -79,6 +82,10 @@ def _base_smart_run(*, repo_view_raises=True, dev_exists=False, dev_ahead=0,
                 return "abc1234\n"
             raise CommandError(argv, 128, "", "")
         if argv[1] == "rev-list" and "--count" in argv:
+            # Distinguish the clone commit-count check (HEAD) from the
+            # dev-ahead check (origin/main..dev).
+            if "HEAD" in argv:
+                return "3\n"  # clone has commits — not stuck in race loop
             return f"{dev_ahead}\n"
         if argv[1] == "status":
             return status_output
@@ -205,6 +212,8 @@ def test_patches_module_yaml_with_inputs(tmp_path, monkeypatch, mocker):
         # dev branch doesn't exist → create it
         if argv[1] == "rev-parse" and "--verify" in argv:
             raise CommandError(argv, 128, "", "")
+        if argv[1] == "rev-list" and "--count" in argv and "HEAD" in argv:
+            return "3\n"  # clone has commits — not stuck in race loop
         if argv[1] == "status":
             return "M module.yaml\n"  # dirty → commit
         if argv[1] == "ls-remote":
@@ -266,6 +275,8 @@ def test_create_module_resumes_when_repo_exists_from_template(
             return ""
         if argv[1] == "rev-parse" and "--verify" in argv:
             raise CommandError(argv, 128, "", "")
+        if argv[1] == "rev-list" and "--count" in argv and "HEAD" in argv:
+            return "3\n"  # clone has commits — not stuck in race loop
         if argv[1] == "status":
             return "M module.yaml\n"
         if argv[1] == "ls-remote":
@@ -349,6 +360,8 @@ def test_create_module_resumes_when_local_clone_exists_with_correct_remote(
             return f"https://github.com/woodard-energy/{slug}.git\n"
         if argv[1] == "rev-parse" and "--verify" in argv:
             raise CommandError(argv, 128, "", "")
+        if argv[1] == "rev-list" and "--count" in argv and "HEAD" in argv:
+            return "3\n"  # clone has commits — not stuck in race loop
         if argv[1] == "status":
             return ""  # nothing to commit
         if argv[1] == "ls-remote":
@@ -493,6 +506,8 @@ def test_create_module_skips_commit_when_nothing_to_commit(
             return f"https://github.com/woodard-energy/{slug}.git\n"
         if argv[1] == "rev-parse" and "--verify" in argv:
             raise CommandError(argv, 128, "", "")  # no dev branch yet
+        if argv[1] == "rev-list" and "--count" in argv and "HEAD" in argv:
+            return "3\n"  # clone has commits — not stuck in race loop
         if argv[1] == "status":
             return ""  # clean tree
         if argv[1] == "commit":
@@ -540,6 +555,8 @@ def test_create_module_skips_push_when_origin_dev_already_in_sync(
             return f"https://github.com/woodard-energy/{slug}.git\n"
         if argv[1] == "rev-parse" and "--verify" in argv:
             raise CommandError(argv, 128, "", "")
+        if argv[1] == "rev-list" and "--count" in argv and "HEAD" in argv:
+            return "3\n"  # clone has commits — not stuck in race loop
         if argv[1] == "status":
             return ""  # clean
         if argv[1] == "ls-remote":
@@ -607,3 +624,130 @@ def test_create_module_stops_when_local_dev_diverges_from_origin(
     assert r.exit_code != 0
     combined = r.stdout + (r.stderr or "")
     assert "diverges" in combined.lower()
+
+
+# ── Template-copy race condition fix (v0.2.2) ─────────────────────────────────
+
+def test_create_module_waits_for_template_copy(tmp_path, monkeypatch, mocker):
+    """gh api commits returns 0 on first poll, then 1 — verb waits and succeeds."""
+    monkeypatch.chdir(tmp_path)
+    mocker.patch("time.sleep")  # don't actually sleep
+
+    # Track how many times we've polled the commits API
+    poll_state = {"calls": 0}
+
+    def smart_run(argv, **kw):
+        # ── gh repo view → repo does not exist
+        if argv[0] == "gh" and argv[1] == "repo" and argv[2] == "view":
+            raise CommandError(argv, 1, "", "repository not found")
+        # ── gh api repos/.../commits — first call returns 0, second returns 1
+        if argv[0] == "gh" and argv[1] == "api" and "commits" in argv[2]:
+            poll_state["calls"] += 1
+            if poll_state["calls"] == 1:
+                return "0"
+            return "1"
+        if argv[0] == "gh":
+            return ""
+        # ── git ──────────────────────────────────────────────────────────────
+        if argv[1] == "rev-parse" and "--verify" in argv:
+            raise CommandError(argv, 128, "", "")
+        if argv[1] == "rev-list" and "--count" in argv and "HEAD" in argv:
+            return "3\n"
+        if argv[1] == "status":
+            return "M module.yaml\n"
+        if argv[1] == "ls-remote":
+            raise CommandError(argv, 2, "", "")
+        return ""
+
+    mocker.patch("woodard_module_helpers.cli.create_module.run", side_effect=smart_run)
+
+    runner = CliRunner()
+    r = runner.invoke(app, [
+        "create-module", "--domain", "geology", "--name", "well-lookup",
+        "--display-name", "Well Lookup",
+    ])
+    assert r.exit_code == 0, r.stdout
+    # Should have polled at least twice before content arrived
+    assert poll_state["calls"] >= 2, "expected at least two polls of the commits API"
+
+
+def test_create_module_times_out_when_template_never_copies(tmp_path, monkeypatch, mocker):
+    """gh api commits always returns 0 — verb errors with a clear timeout message."""
+    monkeypatch.chdir(tmp_path)
+    mocker.patch("time.sleep")  # don't actually sleep
+
+    # Make time.time() advance quickly past the 30s deadline after a few ticks
+    time_values = iter([0.0, 0.0, 5.0, 10.0, 15.0, 20.0, 25.0, 31.0, 31.0, 31.0])
+
+    def fake_time():
+        try:
+            return next(time_values)
+        except StopIteration:
+            return 31.0
+
+    mocker.patch("woodard_module_helpers.cli.create_module.time.time", side_effect=fake_time)
+
+    def smart_run(argv, **kw):
+        if argv[0] == "gh" and argv[1] == "repo" and argv[2] == "view":
+            raise CommandError(argv, 1, "", "repository not found")
+        if argv[0] == "gh" and argv[1] == "api" and "commits" in argv[2]:
+            return "0"  # always empty
+        if argv[0] == "gh":
+            return ""
+        return ""
+
+    mocker.patch("woodard_module_helpers.cli.create_module.run", side_effect=smart_run)
+
+    runner = CliRunner()
+    r = runner.invoke(app, [
+        "create-module", "--domain", "geology", "--name", "well-lookup",
+        "--display-name", "Well Lookup",
+    ])
+    assert r.exit_code != 0
+    combined = r.stdout + (r.stderr or "")
+    assert "timed out" in combined.lower() or "timeout" in combined.lower()
+    assert "template" in combined.lower()
+
+
+def test_create_module_resumes_when_local_clone_has_commits(tmp_path, monkeypatch, mocker):
+    """Existing local clone already has commits — no wait loop, no error (regression guard)."""
+    monkeypatch.chdir(tmp_path)
+    slug = "geology-well-lookup"
+    repo_dir = tmp_path / slug
+    repo_dir.mkdir()
+    _make_git_dir(repo_dir, f"https://github.com/woodard-energy/{slug}.git")
+
+    wait_loop_entered = {"n": 0}
+
+    def smart_run(argv, **kw):
+        if argv[0] == "gh" and argv[1] == "repo" and argv[2] == "view":
+            return json.dumps({
+                "templateRepository": {"full_name": "Woodard-Energy/module-template"}
+            })
+        if argv[0] == "gh":
+            return ""
+        if argv[1] == "remote" and argv[2] == "get-url":
+            return f"https://github.com/woodard-energy/{slug}.git\n"
+        if argv[1] == "rev-parse" and "--verify" in argv:
+            raise CommandError(argv, 128, "", "")
+        if argv[1] == "rev-list" and "--count" in argv and "HEAD" in argv:
+            return "5\n"  # clone is populated
+        if argv[1] == "fetch":
+            # If we ever reach fetch, the wait loop was entered unexpectedly
+            wait_loop_entered["n"] += 1
+            return ""
+        if argv[1] == "status":
+            return ""
+        if argv[1] == "ls-remote":
+            raise CommandError(argv, 2, "", "")
+        return ""
+
+    mocker.patch("woodard_module_helpers.cli.create_module.run", side_effect=smart_run)
+
+    runner = CliRunner()
+    r = runner.invoke(app, [
+        "create-module", "--domain", "geology", "--name", "well-lookup",
+        "--display-name", "Well Lookup",
+    ])
+    assert r.exit_code == 0, r.stdout
+    assert wait_loop_entered["n"] == 0, "fetch should not be called when clone has commits"

@@ -75,9 +75,9 @@ def test_command_error_shows_no_output_when_both_empty(mocker):
 
 
 def test_command_error_includes_command_prefix():
-    """CommandError message starts with up to 3 argv tokens."""
+    """CommandError message starts with up to 4 argv tokens."""
     err = CommandError(["gh", "repo", "clone", "woodard-energy/foo"], 1, "", "clone failed")
-    assert str(err).startswith("gh repo clone")
+    assert str(err).startswith("gh repo clone woodard-energy/foo")
 
 
 def test_command_error_truncates_long_output():

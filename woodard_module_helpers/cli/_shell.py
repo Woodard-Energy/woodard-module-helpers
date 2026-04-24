@@ -13,7 +13,7 @@ class CommandError(RuntimeError):
         # Show stderr first; if empty, fall back to stdout. Trim to keep the
         # message readable but include enough context to diagnose.
         output = stderr.strip() or stdout.strip() or "(no output)"
-        cmd = " ".join(argv[:3])  # e.g. "gh repo clone" — enough to identify
+        cmd = " ".join(argv[:4])  # e.g. "git push -u origin" — 4 tokens covers most useful commands
         super().__init__(f"{cmd} exited {returncode}: {output[:500]}")
 
 
