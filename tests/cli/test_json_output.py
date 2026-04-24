@@ -20,7 +20,25 @@ def _module_repo(tmp_path, monkeypatch):
 
 def test_create_module_json_output(tmp_path, monkeypatch, mocker):
     monkeypatch.chdir(tmp_path)
-    mocker.patch("woodard_module_helpers.cli.create_module.run", return_value="")
+
+    from woodard_module_helpers.cli._shell import CommandError
+
+    def smart_run(argv, **kw):
+        # gh repo view → repo doesn't exist → create
+        if argv[0] == "gh" and argv[1] == "repo" and argv[2] == "view":
+            raise CommandError(argv, 1, "", "not found")
+        # dev branch doesn't exist
+        if argv[0] == "git" and argv[1] == "rev-parse" and "--verify" in argv:
+            raise CommandError(argv, 128, "", "")
+        # dirty working tree → commit
+        if argv[0] == "git" and argv[1] == "status":
+            return "M module.yaml\n"
+        # no remote dev branch
+        if argv[0] == "git" and argv[1] == "ls-remote":
+            raise CommandError(argv, 2, "", "")
+        return ""
+
+    mocker.patch("woodard_module_helpers.cli.create_module.run", side_effect=smart_run)
 
     runner = CliRunner()
     r = runner.invoke(app, [
@@ -88,7 +106,7 @@ def test_error_emits_json_on_failure(_module_repo, mocker):
 
     def side(argv, **kw):
         if argv[:2] == ["uv", "run"] and "pytest" in argv:
-            raise CommandError(argv, 1, "test failure")
+            raise CommandError(argv, 1, "", "test failure")
         return ""
 
     mocker.patch(

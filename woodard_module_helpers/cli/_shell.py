@@ -5,11 +5,16 @@ from pathlib import Path
 class CommandError(RuntimeError):
     """Raised when a subprocess exits non-zero."""
 
-    def __init__(self, argv: list[str], returncode: int, stderr: str):
+    def __init__(self, argv: list[str], returncode: int, stdout: str, stderr: str):
         self.argv = argv
         self.returncode = returncode
+        self.stdout = stdout
         self.stderr = stderr
-        super().__init__(f"{' '.join(argv)} exited {returncode}: {stderr}")
+        # Show stderr first; if empty, fall back to stdout. Trim to keep the
+        # message readable but include enough context to diagnose.
+        output = stderr.strip() or stdout.strip() or "(no output)"
+        cmd = " ".join(argv[:3])  # e.g. "gh repo clone" — enough to identify
+        super().__init__(f"{cmd} exited {returncode}: {output[:500]}")
 
 
 def run(argv: list[str], cwd: str | Path | None = None, check: bool = True) -> str:
@@ -24,5 +29,5 @@ def run(argv: list[str], cwd: str | Path | None = None, check: bool = True) -> s
         text=True,
     )
     if check and result.returncode != 0:
-        raise CommandError(argv, result.returncode, result.stderr)
+        raise CommandError(argv, result.returncode, result.stdout, result.stderr)
     return result.stdout

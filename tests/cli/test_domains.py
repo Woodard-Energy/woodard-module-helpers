@@ -70,7 +70,7 @@ class TestGhApiFailure:
     def test_returns_fallback_on_command_error(self, mocker):
         mocker.patch(
             "woodard_module_helpers.cli._domains.run",
-            side_effect=CommandError(["gh", "api", "..."], 1, "not authenticated"),
+            side_effect=CommandError(["gh", "api", "..."], 1, "", "not authenticated"),
         )
 
         result = fetch_valid_domains()
@@ -80,7 +80,7 @@ class TestGhApiFailure:
     def test_logs_warning_on_command_error(self, mocker, caplog):
         mocker.patch(
             "woodard_module_helpers.cli._domains.run",
-            side_effect=CommandError(["gh", "api", "..."], 1, "not authenticated"),
+            side_effect=CommandError(["gh", "api", "..."], 1, "", "not authenticated"),
         )
 
         with caplog.at_level(logging.WARNING, logger="woodard_module_helpers.cli._domains"):

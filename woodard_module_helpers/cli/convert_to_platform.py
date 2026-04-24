@@ -6,10 +6,12 @@ import typer
 from woodard_module_helpers.cli import app
 from woodard_module_helpers.cli._domains import fetch_valid_domains
 from woodard_module_helpers.cli._output import echo, emit_error, emit_success
-from woodard_module_helpers.cli._shell import CommandError, run
 from woodard_module_helpers.cli.create_module import (
     KEBAB_RE,
     TEMPLATE_REPO,
+    _ensure_dev_branch_committed_and_pushed,
+    _ensure_github_repo,
+    _ensure_local_clone,
     _patch_placeholders,
 )
 
@@ -42,6 +44,16 @@ def convert_to_platform(
         )
 
     src = Path(source).resolve()
+
+    # Guard: source dir must exist (useful on re-run if someone moved it).
+    if not src.exists():
+        emit_error(
+            verb,
+            f"source directory {src} does not exist. "
+            "If it was moved or renamed, update --source and re-run.",
+            json_output=json_output, exit_code=2,
+        )
+
     missing = [r for r in REQUIRED if not (src / r).exists()]
     if missing:
         emit_error(
@@ -57,46 +69,27 @@ def convert_to_platform(
         json_output=json_output,
     )
 
-    try:
-        run([
-            "gh", "repo", "create", full,
-            "--private",
-            "--template", TEMPLATE_REPO,
-            "--description",
-            description or f"{display_name} (converted from {src.name})",
-        ])
-    except CommandError as e:
-        emit_error(
-            verb, f"gh repo create failed: {e.stderr}",
-            json_output=json_output,
-        )
-
-    try:
-        run(["gh", "repo", "clone", full])
-    except CommandError as e:
-        emit_error(
-            verb,
-            f"gh repo clone failed: {e.stderr}. "
-            f"Note: {full} was created on GitHub — delete it manually to retry.",
-            json_output=json_output,
-        )
-
-    dest = Path(slug)
-    _copy_source_into_dest(src, dest)
-    _patch_placeholders(
-        dest, domain=domain, name=name, display_name=display_name
+    # ── Step A: gh repo create (idempotent) ──────────────────────────────────
+    _ensure_github_repo(
+        verb, full, slug,
+        description or f"{display_name} (converted from {src.name})",
+        display_name, json_output,
     )
 
-    try:
-        run(["git", "checkout", "-B", "dev"], cwd=dest)
-        run(["git", "add", "-A"], cwd=dest)
-        run(
-            ["git", "commit", "-m", f"Convert {src.name} to platform module"],
-            cwd=dest,
-        )
-        run(["git", "push", "-u", "origin", "dev"], cwd=dest)
-    except CommandError as e:
-        emit_error(verb, f"git failed: {e.stderr}", json_output=json_output)
+    # ── Step B: gh repo clone (idempotent) ───────────────────────────────────
+    dest = Path(slug)
+    _ensure_local_clone(verb, full, slug, dest, json_output)
+
+    # ── Copy source files + patch placeholders ────────────────────────────────
+    _copy_source_into_dest(src, dest)
+    _patch_placeholders(dest, domain=domain, name=name, display_name=display_name)
+
+    # ── Steps D-F: dev branch, commit, push (idempotent) ─────────────────────
+    _ensure_dev_branch_committed_and_pushed(
+        verb, dest,
+        commit_message=f"Convert {src.name} to platform module",
+        json_output=json_output,
+    )
 
     echo("", json_output=json_output)
     echo(f"✓ Converted {src} → {full}", json_output=json_output)

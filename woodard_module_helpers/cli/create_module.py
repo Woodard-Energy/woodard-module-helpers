@@ -1,3 +1,4 @@
+import json
 import re
 from pathlib import Path
 
@@ -43,41 +44,20 @@ def create_module(
     full = f"woodard-energy/{slug}"
     echo(f"Creating {full} from template {TEMPLATE_REPO}...", json_output=json_output)
 
-    try:
-        run([
-            "gh", "repo", "create", full,
-            "--private",
-            "--template", TEMPLATE_REPO,
-            "--description", description or f"{display_name} module",
-        ])
-    except CommandError as e:
-        emit_error(
-            verb, f"gh repo create failed: {e.stderr}",
-            json_output=json_output,
-        )
+    # ── Step A: gh repo create (idempotent) ──────────────────────────────────
+    _ensure_github_repo(verb, full, slug, description, display_name, json_output)
 
-    try:
-        run(["gh", "repo", "clone", full])
-    except CommandError as e:
-        emit_error(
-            verb,
-            f"gh repo clone failed: {e.stderr}. "
-            f"Note: {full} was created on GitHub — delete it manually to retry.",
-            json_output=json_output,
-        )
-
+    # ── Step B: gh repo clone (idempotent) ───────────────────────────────────
     repo = Path(slug)
-    _patch_placeholders(
-        repo, domain=domain, name=name, display_name=display_name
-    )
+    _ensure_local_clone(verb, full, slug, repo, json_output)
 
-    try:
-        run(["git", "checkout", "-B", "dev"], cwd=repo)
-        run(["git", "add", "-A"], cwd=repo)
-        run(["git", "commit", "-m", "Initial scaffold"], cwd=repo)
-        run(["git", "push", "-u", "origin", "dev"], cwd=repo)
-    except CommandError as e:
-        emit_error(verb, f"git failed: {e.stderr}", json_output=json_output)
+    # ── Step C: patch placeholders (safe no-op when already patched) ─────────
+    _patch_placeholders(repo, domain=domain, name=name, display_name=display_name)
+
+    # ── Steps D-F: dev branch, commit, push (idempotent) ─────────────────────
+    _ensure_dev_branch_committed_and_pushed(
+        verb, repo, commit_message="Initial scaffold", json_output=json_output
+    )
 
     echo("", json_output=json_output)
     echo(f"✓ Created {full}", json_output=json_output)
@@ -100,6 +80,225 @@ def create_module(
         domain=domain,
         name=name,
     )
+
+
+# ── Shared idempotency helpers ────────────────────────────────────────────────
+
+def _ensure_github_repo(
+    verb: str,
+    full: str,
+    slug: str,
+    description: str,
+    display_name: str,
+    json_output: bool,
+) -> None:
+    """Create the GitHub repo from the template, or verify it already exists."""
+    try:
+        out = run(["gh", "repo", "view", full, "--json", "templateRepository"], check=True)
+    except CommandError:
+        # Repo does not exist — create it.
+        try:
+            run([
+                "gh", "repo", "create", full,
+                "--private",
+                "--template", TEMPLATE_REPO,
+                "--description", description or f"{display_name} module",
+            ])
+        except CommandError as e:
+            emit_error(
+                verb, f"gh repo create failed: {e}",
+                json_output=json_output,
+            )
+        return
+
+    # Repo exists — check that it came from our template.
+    try:
+        payload = json.loads(out)
+        tmpl = payload.get("templateRepository") or {}
+        tmpl_full_name = tmpl.get("full_name") or tmpl.get("nameWithOwner") or ""
+    except (json.JSONDecodeError, AttributeError):
+        tmpl_full_name = ""
+
+    if tmpl_full_name.lower() == TEMPLATE_REPO.lower():
+        echo(
+            f"GitHub repo {full} already exists from template; resuming from clone step.",
+            json_output=json_output,
+        )
+        return
+
+    emit_error(
+        verb,
+        f"GitHub repo {full} exists but was not created from module-template. "
+        "Refusing to modify it. If this is a stale leftover, delete it manually "
+        "via `gh repo delete` or the GitHub UI.",
+        json_output=json_output,
+        exit_code=2,
+    )
+
+
+def _ensure_local_clone(
+    verb: str,
+    full: str,
+    slug: str,
+    repo: Path,
+    json_output: bool,
+) -> None:
+    """Clone the GitHub repo locally, or verify an existing clone matches."""
+    if not repo.exists():
+        try:
+            run(["gh", "repo", "clone", full])
+        except CommandError as e:
+            emit_error(
+                verb,
+                f"gh repo clone failed: {e}. "
+                f"Note: {full} was created on GitHub — delete it manually to retry.",
+                json_output=json_output,
+            )
+        return
+
+    # Directory exists — must be a git repo pointing at the right remote.
+    if not (repo / ".git").exists():
+        emit_error(
+            verb,
+            f"{repo.resolve()} exists but is not a git checkout. "
+            "Refusing to write into it. Move or rename the existing dir, then re-run.",
+            json_output=json_output,
+            exit_code=2,
+        )
+
+    try:
+        origin_url = run(
+            ["git", "remote", "get-url", "origin"], cwd=repo
+        ).strip().lower()
+    except CommandError:
+        emit_error(
+            verb,
+            f"{repo.resolve()} is a git repo but has no 'origin' remote. "
+            "Refusing to continue. Fix the remote manually, then re-run.",
+            json_output=json_output,
+            exit_code=2,
+        )
+        return  # unreachable; satisfies type checkers
+
+    expected = f"woodard-energy/{slug}".lower()
+    if expected not in origin_url:
+        emit_error(
+            verb,
+            f"{repo.resolve()} exists but its git remote points at {origin_url!r}, "
+            f"not woodard-energy/{slug}. Refusing to overwrite. "
+            "Move or rename the existing dir, then re-run.",
+            json_output=json_output,
+            exit_code=2,
+        )
+
+    echo(
+        f"Local clone already exists at {repo.resolve()}; resuming.",
+        json_output=json_output,
+    )
+
+
+def _ensure_dev_branch_committed_and_pushed(
+    verb: str,
+    repo: Path,
+    commit_message: str,
+    json_output: bool,
+) -> None:
+    """Create/verify the dev branch, commit any pending changes, push to origin."""
+    # ── Step D: dev branch ───────────────────────────────────────────────────
+    try:
+        run(["git", "rev-parse", "--verify", "dev"], cwd=repo, check=True)
+        dev_exists = True
+    except CommandError:
+        dev_exists = False
+
+    if not dev_exists:
+        try:
+            run(["git", "checkout", "-b", "dev"], cwd=repo)
+        except CommandError as e:
+            emit_error(verb, f"git checkout -b dev failed: {e}", json_output=json_output)
+    else:
+        # Dev exists — check if it has extra commits beyond main.
+        try:
+            ahead_raw = run(
+                ["git", "rev-list", "--count", "origin/main..dev"], cwd=repo
+            ).strip()
+            ahead = int(ahead_raw) if ahead_raw.isdigit() else 0
+        except CommandError:
+            ahead = 0
+
+        if ahead > 0:
+            emit_error(
+                verb,
+                "dev branch already has commits beyond main. Resume manually if these "
+                "are intentional, or delete the dev branch (git branch -D dev) and "
+                "re-run if it's stale.",
+                json_output=json_output,
+                exit_code=2,
+            )
+
+        try:
+            run(["git", "checkout", "dev"], cwd=repo)
+        except CommandError as e:
+            emit_error(verb, f"git checkout dev failed: {e}", json_output=json_output)
+
+    # ── Step E: add + commit ──────────────────────────────────────────────────
+    try:
+        run(["git", "add", "-A"], cwd=repo)
+        status = run(["git", "status", "--porcelain"], cwd=repo).strip()
+    except CommandError as e:
+        emit_error(verb, f"git add/status failed: {e}", json_output=json_output)
+        return
+
+    if status:
+        try:
+            run(["git", "commit", "-m", commit_message], cwd=repo)
+        except CommandError as e:
+            emit_error(verb, f"git commit failed: {e}", json_output=json_output)
+    else:
+        echo("Working tree clean; skipping commit.", json_output=json_output)
+
+    # ── Step F: push ─────────────────────────────────────────────────────────
+    try:
+        run(["git", "ls-remote", "--exit-code", "--heads", "origin", "dev"], cwd=repo, check=True)
+        remote_dev_exists = True
+    except CommandError:
+        remote_dev_exists = False
+
+    if remote_dev_exists:
+        # Compare local dev tip with origin/dev.
+        try:
+            local_sha = run(["git", "rev-parse", "dev"], cwd=repo).strip()
+            remote_sha = run(["git", "rev-parse", "origin/dev"], cwd=repo).strip()
+        except CommandError:
+            local_sha = remote_sha = None
+
+        if local_sha and remote_sha:
+            if local_sha == remote_sha:
+                echo("origin/dev already up to date; skipping push.", json_output=json_output)
+                return
+
+            # Check whether local is ahead or diverged.
+            try:
+                behind_raw = run(
+                    ["git", "rev-list", "--count", "dev..origin/dev"], cwd=repo
+                ).strip()
+                behind = int(behind_raw) if behind_raw.isdigit() else 0
+            except CommandError:
+                behind = 0
+
+            if behind > 0:
+                emit_error(
+                    verb,
+                    "Local dev branch diverges from origin/dev. "
+                    "Resolve manually before re-running.",
+                    json_output=json_output,
+                    exit_code=2,
+                )
+
+    try:
+        run(["git", "push", "-u", "origin", "dev"], cwd=repo)
+    except CommandError as e:
+        emit_error(verb, f"git push failed: {e}", json_output=json_output)
 
 
 def _patch_placeholders(
