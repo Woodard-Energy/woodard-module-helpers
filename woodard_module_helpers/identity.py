@@ -11,27 +11,58 @@ log = logging.getLogger(__name__)
 # Returned when WOODARD_SIGNING_SECRET is unset — local dev convenience.
 # Wildcard role allows unverified requests through role gates. Only safe
 # when the module port isn't exposed (shell enforces the network boundary).
-ANONYMOUS_DEV = {"email": "anonymous", "roles": ["*"]}
+ANONYMOUS_DEV = {"email": "anonymous", "user_id": 0, "display_name": "anonymous", "roles": ["*"]}
 
 # Returned when the secret IS set but a request can't be verified (missing
 # headers, tampered signature). Empty roles list denies role-gated routes.
-ANONYMOUS_DENY = {"email": "anonymous", "roles": []}
+ANONYMOUS_DENY = {"email": "anonymous", "user_id": 0, "display_name": "anonymous", "roles": []}
 
 
-def compute_signature(email: str, roles: list[str], secret: str) -> str:
-    """Compute HMAC-SHA256 signature matching what the platform shell emits."""
-    payload = f"{email}:{','.join(roles)}".encode()
+def compute_signature(
+    email: str,
+    roles: list[str],
+    secret: str,
+    *,
+    user_id: int | None = None,
+    display_name: str | None = None,
+) -> str:
+    """HMAC-SHA256 signature.
+
+    Two canonical formats during the auth-layer migration:
+
+    - Legacy 3-header (today's shell `IdentityMiddleware`): canonical is
+      ``f"{email}:{roles_csv}"`` where ``roles_csv`` preserves the input
+      order. Selected when EITHER ``user_id`` OR ``display_name`` is None.
+    - New 5-header (post-Entra shell `SessionMiddleware`): canonical is
+      ``f"{email}|{user_id}|{display_name}|{roles_csv}"`` where
+      ``roles_csv`` is sorted ascending. Selected when BOTH ``user_id``
+      AND ``display_name`` are non-None.
+
+    The "3-header" / "5-header" naming refers to the count of X-Woodard-*
+    HTTP headers transmitted with the request, NOT the internal canonical
+    string field count. This dual-format support lets one helper version
+    work against both the pre-Entra and post-Entra shells during the
+    transition window.
+    """
+    if user_id is not None and display_name is not None:
+        roles_csv = ",".join(sorted(roles))
+        payload = f"{email}|{user_id}|{display_name}|{roles_csv}".encode()
+    else:
+        # Legacy 3-field — preserves the original separator (':') and order.
+        roles_csv = ",".join(roles)
+        payload = f"{email}:{roles_csv}".encode()
     return hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
 
 
 def current_user(request: Request) -> dict:
-    """FastAPI dependency — verify X-Woodard-* headers and return user dict.
+    """FastAPI dependency: verify X-Woodard-* identity and return user dict.
 
-    - No WOODARD_SIGNING_SECRET set → ANONYMOUS_DEV (wildcard, local dev).
-      Emits a warning log so misconfig in production is visible.
-    - Secret set but request unsigned/tampered → ANONYMOUS_DENY (no roles).
-      Role gates will deny such requests.
-    - Secret set and signature valid → {"email": ..., "roles": [...]}.
+    Accepts both the legacy 3-header format (email, roles, signature) and the
+    new 5-header format (email, user_id, display_name, roles, signature). The
+    format is selected by presence of X-Woodard-User-Id AND X-Woodard-Display-Name.
+
+    Returns a dict with keys: email, user_id, display_name, roles. In legacy
+    mode the extra fields fall back to sentinels (user_id=0, display_name=email).
     """
     secret = os.environ.get("WOODARD_SIGNING_SECRET", "")
     if not secret:
@@ -42,20 +73,46 @@ def current_user(request: Request) -> dict:
         return dict(ANONYMOUS_DEV)
 
     email = request.headers.get("x-woodard-user", "")
-    roles_header = request.headers.get("x-woodard-roles", "")
     sig = request.headers.get("x-woodard-signature", "")
-
     if not email or not sig:
         return dict(ANONYMOUS_DENY)
 
+    user_id_str = request.headers.get("x-woodard-user-id", "")
+    display_name = request.headers.get("x-woodard-display-name", "")
+    roles_header = request.headers.get("x-woodard-roles", "")
     roles = [r.strip() for r in roles_header.split(",") if r.strip()]
-    expected = compute_signature(email, roles, secret)
+
+    if user_id_str and display_name:
+        # 5-header path. user_id must parse as int.
+        try:
+            user_id = int(user_id_str)
+        except ValueError:
+            log.warning("invalid X-Woodard-User-Id (not int) for user=%s", email)
+            return dict(ANONYMOUS_DENY)
+        expected = compute_signature(
+            email=email,
+            roles=roles,
+            secret=secret,
+            user_id=user_id,
+            display_name=display_name,
+        )
+    else:
+        # Legacy 3-header path.
+        user_id = 0
+        display_name = email
+        expected = compute_signature(email=email, roles=roles, secret=secret)
+
     # Both operands are str (hexdigest). compare_digest rejects mixed types.
     if not hmac.compare_digest(sig, expected):
         log.warning("HMAC mismatch for user=%s", email)
         return dict(ANONYMOUS_DENY)
 
-    return {"email": email, "roles": roles}
+    return {
+        "email": email,
+        "user_id": user_id,
+        "display_name": display_name,
+        "roles": roles,
+    }
 
 
 def require_role(role: str) -> Callable:
