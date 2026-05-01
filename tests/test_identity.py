@@ -136,7 +136,7 @@ def test_require_any_role_denies_missing(monkeypatch):
 
 
 def test_compute_signature_3_field_legacy() -> None:
-    """3-field canonical: email|roles — matches today's shell output."""
+    """3-header canonical (legacy): "email:roles_csv" — matches today's shell."""
     sig = compute_signature(
         email="jesse@woodardenergy.com",
         roles=["admin", "operator"],
@@ -151,7 +151,7 @@ def test_compute_signature_3_field_legacy() -> None:
 
 
 def test_compute_signature_5_field_new() -> None:
-    """5-field canonical: email|user_id|display_name|roles (sorted)."""
+    """5-header canonical (new): "email|user_id|display_name|roles_csv_sorted"."""
     sig = compute_signature(
         email="jesse@woodardenergy.com",
         roles=["operator", "admin"],  # unsorted on input
@@ -176,3 +176,21 @@ def test_compute_signature_3_field_when_extras_none() -> None:
     )
     sig_b = compute_signature(email="x@y.z", roles=["a"], secret="s")
     assert sig_a == sig_b
+
+
+def test_compute_signature_falls_back_to_legacy_when_only_user_id_given() -> None:
+    """Half-given (only user_id, no display_name) -> legacy 3-header path."""
+    sig = compute_signature(
+        email="x@y.z", roles=["a"], secret="s", user_id=42,
+    )
+    legacy = compute_signature(email="x@y.z", roles=["a"], secret="s")
+    assert sig == legacy
+
+
+def test_compute_signature_falls_back_to_legacy_when_only_display_name_given() -> None:
+    """Half-given (only display_name, no user_id) -> legacy 3-header path."""
+    sig = compute_signature(
+        email="x@y.z", roles=["a"], secret="s", display_name="X Y",
+    )
+    legacy = compute_signature(email="x@y.z", roles=["a"], secret="s")
+    assert sig == legacy

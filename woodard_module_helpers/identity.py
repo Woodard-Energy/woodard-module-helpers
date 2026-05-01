@@ -28,13 +28,20 @@ def compute_signature(
 ) -> str:
     """HMAC-SHA256 signature.
 
-    - Legacy 3-field canonical: ``f"{email}:{roles_csv}"`` (used until the
-      auth-layer migration completes).
-    - New 5-field canonical: ``f"{email}|{user_id}|{display_name}|{roles_csv}"``
-      with roles sorted ascending — used by the new shell SessionMiddleware.
+    Two canonical formats during the auth-layer migration:
 
-    The format is selected by whether ``user_id`` AND ``display_name`` are both
-    provided. This lets one helper version support both shells during the
+    - Legacy 3-header (today's shell `IdentityMiddleware`): canonical is
+      ``f"{email}:{roles_csv}"`` where ``roles_csv`` preserves the input
+      order. Selected when EITHER ``user_id`` OR ``display_name`` is None.
+    - New 5-header (post-Entra shell `SessionMiddleware`): canonical is
+      ``f"{email}|{user_id}|{display_name}|{roles_csv}"`` where
+      ``roles_csv`` is sorted ascending. Selected when BOTH ``user_id``
+      AND ``display_name`` are non-None.
+
+    The "3-header" / "5-header" naming refers to the count of X-Woodard-*
+    HTTP headers transmitted with the request, NOT the internal canonical
+    string field count. This dual-format support lets one helper version
+    work against both the pre-Entra and post-Entra shells during the
     transition window.
     """
     if user_id is not None and display_name is not None:
@@ -72,6 +79,8 @@ def current_user(request: Request) -> dict:
         return dict(ANONYMOUS_DENY)
 
     roles = [r.strip() for r in roles_header.split(",") if r.strip()]
+    # NOTE: legacy 3-header verification path. Auth-layer plan Task 3
+    # extends this function to also verify the new 5-header contract.
     expected = compute_signature(email, roles, secret)
     # Both operands are str (hexdigest). compare_digest rejects mixed types.
     if not hmac.compare_digest(sig, expected):
