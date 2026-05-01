@@ -2,7 +2,7 @@ import pytest
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 
-from woodard_module_helpers.identity import current_user
+from woodard_module_helpers.identity import compute_signature, current_user
 from woodard_module_helpers.testing import signed_identity_headers
 
 
@@ -85,7 +85,7 @@ def test_signed_identity_headers_legacy_3_header() -> None:
 
 
 def test_signed_identity_headers_5_header_with_user_id_and_display_name() -> None:
-    """Explicit user_id/display_name -> emits all 5 headers."""
+    """Explicit user_id/display_name -> emits all 5 headers with correct signature."""
     h = signed_identity_headers(
         email="jesse@woodardenergy.com",
         roles=["operator", "admin"],
@@ -93,11 +93,28 @@ def test_signed_identity_headers_5_header_with_user_id_and_display_name() -> Non
         user_id=42,
         display_name="Jesse Hopper",
     )
+    assert set(h.keys()) == {
+        "X-Woodard-User",
+        "X-Woodard-User-Id",
+        "X-Woodard-Display-Name",
+        "X-Woodard-Roles",
+        "X-Woodard-Signature",
+    }
     assert h["X-Woodard-User"] == "jesse@woodardenergy.com"
     assert h["X-Woodard-User-Id"] == "42"
     assert h["X-Woodard-Display-Name"] == "Jesse Hopper"
     assert h["X-Woodard-Roles"] == "admin,operator"  # sorted
-    assert "X-Woodard-Signature" in h
+
+    # Signature must match what compute_signature produces for the 5-field
+    # canonical (email|user_id|display_name|roles_sorted).
+    expected_sig = compute_signature(
+        email="jesse@woodardenergy.com",
+        roles=["operator", "admin"],
+        secret="test-secret",
+        user_id=42,
+        display_name="Jesse Hopper",
+    )
+    assert h["X-Woodard-Signature"] == expected_sig
 
 
 def test_signed_identity_headers_auto_user_id_and_display_name_default_none() -> None:

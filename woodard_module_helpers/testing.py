@@ -67,6 +67,11 @@ def woodard_test_client() -> Callable[..., httpx.AsyncClient]:
     (email, roles, secret). Returned client has valid signed identity headers
     preconfigured so module tests don't have to think about HMAC.
 
+    Today, this fixture always emits the legacy 3-header identity set
+    (X-Woodard-User, -Roles, -Signature); once auth-layer Task 3 extends
+    ``current_user`` to verify both formats, this can be extended to accept
+    ``user_id`` / ``display_name`` for 5-header round-trip tests.
+
     Usage in a module's test:
         async def test_list(woodard_test_client, app):
             async with woodard_test_client(app, email="t@x", roles=["reservoir"]) as c:
