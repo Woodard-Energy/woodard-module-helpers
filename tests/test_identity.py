@@ -133,3 +133,46 @@ def test_require_any_role_denies_missing(monkeypatch):
         headers=_hdrs("alice@example.com", ["drilling"]),
     )
     assert r.status_code == 403
+
+
+def test_compute_signature_3_field_legacy() -> None:
+    """3-field canonical: email|roles — matches today's shell output."""
+    sig = compute_signature(
+        email="jesse@woodardenergy.com",
+        roles=["admin", "operator"],
+        secret="test-secret",
+    )
+    expected = hmac.new(
+        b"test-secret",
+        b"jesse@woodardenergy.com:admin,operator",
+        hashlib.sha256,
+    ).hexdigest()
+    assert sig == expected
+
+
+def test_compute_signature_5_field_new() -> None:
+    """5-field canonical: email|user_id|display_name|roles (sorted)."""
+    sig = compute_signature(
+        email="jesse@woodardenergy.com",
+        roles=["operator", "admin"],  # unsorted on input
+        secret="test-secret",
+        user_id=42,
+        display_name="Jesse Hopper",
+    )
+    # Roles must be sorted ascending in the canonical string.
+    expected = hmac.new(
+        b"test-secret",
+        b"jesse@woodardenergy.com|42|Jesse Hopper|admin,operator",
+        hashlib.sha256,
+    ).hexdigest()
+    assert sig == expected
+
+
+def test_compute_signature_3_field_when_extras_none() -> None:
+    """Passing user_id=None, display_name=None falls back to legacy 3-field."""
+    sig_a = compute_signature(
+        email="x@y.z", roles=["a"], secret="s",
+        user_id=None, display_name=None,
+    )
+    sig_b = compute_signature(email="x@y.z", roles=["a"], secret="s")
+    assert sig_a == sig_b

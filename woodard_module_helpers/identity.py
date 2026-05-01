@@ -18,9 +18,32 @@ ANONYMOUS_DEV = {"email": "anonymous", "roles": ["*"]}
 ANONYMOUS_DENY = {"email": "anonymous", "roles": []}
 
 
-def compute_signature(email: str, roles: list[str], secret: str) -> str:
-    """Compute HMAC-SHA256 signature matching what the platform shell emits."""
-    payload = f"{email}:{','.join(roles)}".encode()
+def compute_signature(
+    email: str,
+    roles: list[str],
+    secret: str,
+    *,
+    user_id: int | None = None,
+    display_name: str | None = None,
+) -> str:
+    """HMAC-SHA256 signature.
+
+    - Legacy 3-field canonical: ``f"{email}:{roles_csv}"`` (used until the
+      auth-layer migration completes).
+    - New 5-field canonical: ``f"{email}|{user_id}|{display_name}|{roles_csv}"``
+      with roles sorted ascending — used by the new shell SessionMiddleware.
+
+    The format is selected by whether ``user_id`` AND ``display_name`` are both
+    provided. This lets one helper version support both shells during the
+    transition window.
+    """
+    if user_id is not None and display_name is not None:
+        roles_csv = ",".join(sorted(roles))
+        payload = f"{email}|{user_id}|{display_name}|{roles_csv}".encode()
+    else:
+        # Legacy 3-field — preserves the original separator (':') and order.
+        roles_csv = ",".join(roles)
+        payload = f"{email}:{roles_csv}".encode()
     return hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
 
 
