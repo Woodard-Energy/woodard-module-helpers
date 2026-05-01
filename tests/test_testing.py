@@ -66,3 +66,49 @@ def test_signed_identity_headers_raises_without_secret(monkeypatch):
     monkeypatch.delenv("WOODARD_SIGNING_SECRET", raising=False)
     with pytest.raises(ValueError, match="WOODARD_SIGNING_SECRET"):
         signed_identity_headers("x@example.com", ["reservoir"])
+
+
+def test_signed_identity_headers_legacy_3_header() -> None:
+    """No user_id/display_name -> emits the original 3 headers."""
+    h = signed_identity_headers(
+        email="jesse@woodardenergy.com",
+        roles=["admin"],
+        secret="test-secret",
+    )
+    assert set(h.keys()) == {
+        "X-Woodard-User",
+        "X-Woodard-Roles",
+        "X-Woodard-Signature",
+    }
+    assert h["X-Woodard-User"] == "jesse@woodardenergy.com"
+    assert h["X-Woodard-Roles"] == "admin"
+
+
+def test_signed_identity_headers_5_header_with_user_id_and_display_name() -> None:
+    """Explicit user_id/display_name -> emits all 5 headers."""
+    h = signed_identity_headers(
+        email="jesse@woodardenergy.com",
+        roles=["operator", "admin"],
+        secret="test-secret",
+        user_id=42,
+        display_name="Jesse Hopper",
+    )
+    assert h["X-Woodard-User"] == "jesse@woodardenergy.com"
+    assert h["X-Woodard-User-Id"] == "42"
+    assert h["X-Woodard-Display-Name"] == "Jesse Hopper"
+    assert h["X-Woodard-Roles"] == "admin,operator"  # sorted
+    assert "X-Woodard-Signature" in h
+
+
+def test_signed_identity_headers_auto_user_id_and_display_name_default_none() -> None:
+    """Backward compat: existing tests calling without kwargs get 3-header set.
+
+    The auto-derive defaults from the spec are ONLY applied on the consumer
+    side (current_user); the test helper preserves the legacy default
+    behavior so existing tests don't silently get 5-header output.
+    """
+    h = signed_identity_headers(
+        email="x@y.z", roles=["a"], secret="s",
+    )
+    assert "X-Woodard-User-Id" not in h
+    assert "X-Woodard-Display-Name" not in h
