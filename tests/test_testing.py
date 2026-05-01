@@ -21,7 +21,12 @@ def test_signed_identity_headers_produces_valid_signature(monkeypatch):
     )
     r = client.get("/me", headers=hdrs)
     assert r.status_code == 200
-    assert r.json() == {"email": "bob@example.com", "roles": ["drilling"]}
+    assert r.json() == {
+        "email": "bob@example.com",
+        "user_id": 0,
+        "display_name": "bob@example.com",
+        "roles": ["drilling"],
+    }
 
 
 def test_signed_identity_headers_picks_up_env_secret(monkeypatch):
@@ -58,7 +63,12 @@ async def test_woodard_test_client_fixture_sends_signed_headers(
     ) as c:
         r = await c.get("/me")
         assert r.status_code == 200
-        assert r.json() == {"email": "dave@example.com", "roles": ["midstream"]}
+        assert r.json() == {
+            "email": "dave@example.com",
+            "user_id": 0,
+            "display_name": "dave@example.com",
+            "roles": ["midstream"],
+        }
 
 
 def test_signed_identity_headers_raises_without_secret(monkeypatch):
