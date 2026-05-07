@@ -56,7 +56,7 @@ hardcode VM paths — use `Settings` as the single source of truth.
 ### `signed_identity_headers(...)` — testing helper
 
 ```python
-from woodard_module_helpers import signed_identity_headers
+from woodard_module_helpers.testing import signed_identity_headers
 
 headers = signed_identity_headers(
     email="alice@woodardenergy.com",
