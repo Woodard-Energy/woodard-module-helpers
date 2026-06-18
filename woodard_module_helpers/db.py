@@ -1,22 +1,75 @@
 import os
+import struct
 from collections.abc import Generator
 from contextlib import contextmanager
 from functools import lru_cache
+from urllib.parse import quote_plus
 
-from sqlalchemy import Engine, create_engine
+from sqlalchemy import Engine, create_engine, event
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
+
+# ODBC connection attribute that carries a pre-fetched Microsoft Entra access
+# token (msodbcsql's SQL_COPT_SS_ACCESS_TOKEN).
+_SQL_COPT_SS_ACCESS_TOKEN = 1256
+_AZURE_SQL_SCOPE = "https://database.windows.net/.default"
+
+
+def build_mssql_url(server: str, database: str) -> str:
+    """Build a SQLAlchemy ``mssql+pyodbc`` URL for `server`/`database`.
+
+    No authentication is embedded — pair it with
+    ``get_engine(url, mi_client_id=...)`` so a managed-identity token is
+    injected per connection.
+    """
+    if not server or not database:
+        raise ValueError("server and database are required")
+    odbc = (
+        "Driver={ODBC Driver 18 for SQL Server};"
+        f"Server={server};Database={database};"
+        "Encrypt=yes;TrustServerCertificate=yes"
+    )
+    return "mssql+pyodbc:///?odbc_connect=" + quote_plus(odbc)
+
+
+def _attach_managed_identity_token(engine: Engine, client_id: str) -> None:
+    """Inject an Entra access token on every connect for a user-assigned
+    managed identity.
+
+    The ODBC driver's ``Authentication=ActiveDirectoryManagedIdentity`` mode is
+    unreliable on Linux (older builds reject the keyword; the legacy MSI keyword
+    only targets system-assigned identities), so we fetch the token via
+    ``azure-identity`` and hand it to the driver through the access-token
+    attribute — the supported, version-independent path. ``azure-identity`` is
+    an optional dependency: install ``woodard-module-helpers[mssql]``.
+    """
+    from azure.identity import ManagedIdentityCredential
+
+    credential = ManagedIdentityCredential(client_id=client_id)
+
+    @event.listens_for(engine, "do_connect")
+    def _provide_token(dialect, conn_rec, cargs, cparams):
+        token = credential.get_token(_AZURE_SQL_SCOPE).token.encode("utf-16-le")
+        cparams["attrs_before"] = {
+            _SQL_COPT_SS_ACCESS_TOKEN: struct.pack(f"<I{len(token)}s", len(token), token)
+        }
 
 
 @lru_cache(maxsize=16)
-def get_engine(database_url: str) -> Engine:
+def get_engine(database_url: str, mi_client_id: str = "") -> Engine:
     """Return a cached SQLAlchemy Engine for `database_url`.
 
-    Same URL → same engine. Different URL → different engine. Caches up to 16
-    engines (well above any realistic per-module need).
+    Same args → same engine (caches up to 16, above any realistic per-module
+    need). For SQL Server with a user-assigned managed identity, pass
+    `mi_client_id` (and an ``mssql+pyodbc`` URL — see `build_mssql_url`): the
+    engine then injects a fresh Entra access token on every connect. For SQLite
+    and other URLs, omit it and auth is whatever the URL specifies.
     """
     if not database_url:
         raise ValueError("database_url is required")
-    return create_engine(database_url, pool_pre_ping=True, future=True)
+    engine = create_engine(database_url, pool_pre_ping=True, future=True)
+    if mi_client_id and database_url.startswith("mssql"):
+        _attach_managed_identity_token(engine, mi_client_id)
+    return engine
 
 
 @contextmanager

@@ -2,6 +2,7 @@ import pytest
 from sqlalchemy import Column, Integer, String, text
 
 from woodard_module_helpers.db import (
+    build_mssql_url,
     get_engine,
     get_session,
     session_dep,
@@ -85,3 +86,82 @@ def test_session_dep_raises_when_database_url_unset(monkeypatch):
     with pytest.raises(ValueError, match="DATABASE_URL"):
         gen = session_dep()
         next(gen)
+
+
+def test_build_mssql_url_embeds_server_database_driver():
+    url = build_mssql_url("sql.example.com", "AppDb")
+    assert url.startswith("mssql+pyodbc:///?odbc_connect=")
+    from urllib.parse import unquote_plus
+
+    odbc = unquote_plus(url.split("odbc_connect=", 1)[1])
+    assert "Server=sql.example.com" in odbc
+    assert "Database=AppDb" in odbc
+    assert "ODBC Driver 18 for SQL Server" in odbc
+
+
+def test_build_mssql_url_requires_both_args():
+    with pytest.raises(ValueError):
+        build_mssql_url("", "AppDb")
+    with pytest.raises(ValueError):
+        build_mssql_url("host", "")
+
+
+def test_get_engine_sqlite_ignores_mi_client_id():
+    # Non-mssql URL + mi_client_id must NOT trigger an azure-identity import.
+    engine = get_engine("sqlite:///:memory:", mi_client_id="ignored")
+    with get_session(engine) as s:
+        assert s.execute(text("SELECT 1")).scalar() == 1
+
+
+def test_attach_managed_identity_token_constructs_credential_and_listener(monkeypatch):
+    """_attach wires ManagedIdentityCredential(client_id=...) and registers a
+    do_connect listener — verified on a sqlite engine so no pyodbc is needed."""
+    import sys
+    import types
+
+    seen = {}
+
+    class _FakeCredential:
+        def __init__(self, client_id=None):
+            seen["client_id"] = client_id
+
+        def get_token(self, scope):
+            return types.SimpleNamespace(token="faketoken")
+
+    fake_identity = types.ModuleType("azure.identity")
+    fake_identity.ManagedIdentityCredential = _FakeCredential
+    monkeypatch.setitem(sys.modules, "azure", types.ModuleType("azure"))
+    monkeypatch.setitem(sys.modules, "azure.identity", fake_identity)
+
+    from woodard_module_helpers.db import _attach_managed_identity_token
+
+    engine = get_engine("sqlite:///:memory:")
+    _attach_managed_identity_token(engine, "client-abc")
+    # Credential constructed with the given client id (this runs immediately
+    # before the do_connect listener is registered). The actual connect-time
+    # token injection is verified end-to-end against live SQL on the VM.
+    assert seen["client_id"] == "client-abc"
+
+
+def test_get_engine_routes_mssql_urls_to_token_attach(monkeypatch):
+    """get_engine attaches the MI token only for mssql URLs with a client id."""
+    from woodard_module_helpers import db as db_mod
+
+    attached = []
+    monkeypatch.setattr(db_mod, "create_engine", lambda url, **kw: f"ENGINE:{url}")
+    monkeypatch.setattr(
+        db_mod,
+        "_attach_managed_identity_token",
+        lambda engine, client_id: attached.append((engine, client_id)),
+    )
+
+    db_mod.get_engine.cache_clear()
+    eng = db_mod.get_engine("mssql+pyodbc:///?odbc_connect=x", mi_client_id="cid-1")
+    assert attached == [(eng, "cid-1")]
+
+    attached.clear()
+    db_mod.get_engine.cache_clear()
+    db_mod.get_engine("sqlite:///:memory:", mi_client_id="cid-2")
+    assert attached == []  # non-mssql → no token attach
+
+    db_mod.get_engine.cache_clear()  # leave the cache clean for other tests

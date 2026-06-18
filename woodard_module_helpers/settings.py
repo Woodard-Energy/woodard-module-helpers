@@ -22,4 +22,11 @@ class Settings(BaseSettings):
     port: int = 8000
     database_url: str = ""
     sql_schema: str = ""
+    # SQL Server warehouse write-back — set per write-back module.
+    # Combine sql_server/sql_database via build_mssql_url() and pass
+    # sql_mi_client_id to get_engine(url, mi_client_id=...). See
+    # data-storage-patterns in the modules workspace.
+    sql_server: str = ""
+    sql_database: str = ""
+    sql_mi_client_id: str = ""
     woodard_signing_secret: str = ""
