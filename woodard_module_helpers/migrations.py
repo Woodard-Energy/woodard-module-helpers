@@ -41,22 +41,28 @@ def run_migrations(target_metadata: Any) -> None:
     """Run migrations from inside a module's ``alembic/env.py``.
 
     Online (the normal path for ``upgrade`` and ``--autogenerate``) builds the
-    engine from ``Settings`` — managed-identity for SQL Server, SQLite fallback —
-    and places ``alembic_version`` in the module's schema. Offline (``--sql``)
-    emits script text without connecting.
+    engine from ``Settings`` — managed-identity for Postgres (``pg_host``) or SQL
+    Server (``sql_server``), SQLite fallback — and places ``alembic_version`` in
+    the module's schema. Offline (``--sql``) emits script text without connecting.
     """
     from alembic import context
 
-    from woodard_module_helpers.db import build_mssql_url, get_engine
+    from woodard_module_helpers.db import build_mssql_url, build_postgres_url, get_engine
     from woodard_module_helpers.settings import Settings
 
     s = Settings()
-    if s.sql_server:
+    if s.pg_host:
+        url = build_postgres_url(s.pg_host, s.pg_db, s.pg_admin_user)
+        version_schema = s.pg_schema or None
+        mi_client_id = s.pg_admin_mi_client_id
+    elif s.sql_server:
         url = build_mssql_url(s.sql_server, s.sql_database)
         version_schema = s.sql_schema or None
+        mi_client_id = s.sql_mi_client_id
     else:
         url = s.database_url or "sqlite:///./data/app.db"
         version_schema = None
+        mi_client_id = ""
 
     common = dict(
         target_metadata=target_metadata,
@@ -76,7 +82,7 @@ def run_migrations(target_metadata: Any) -> None:
             context.run_migrations()
         return
 
-    engine = get_engine(url, mi_client_id=s.sql_mi_client_id) if s.sql_server else get_engine(url)
+    engine = get_engine(url, mi_client_id=mi_client_id) if mi_client_id else get_engine(url)
     with engine.connect() as connection:
         context.configure(connection=connection, **common)
         with context.begin_transaction():

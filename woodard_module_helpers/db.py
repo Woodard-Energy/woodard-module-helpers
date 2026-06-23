@@ -12,6 +12,8 @@ from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 # token (msodbcsql's SQL_COPT_SS_ACCESS_TOKEN).
 _SQL_COPT_SS_ACCESS_TOKEN = 1256
 _AZURE_SQL_SCOPE = "https://database.windows.net/.default"
+# Entra token audience for Azure Database for PostgreSQL (used as the libpq password).
+_OSSRDBMS_SCOPE = "https://ossrdbms-aad.database.windows.net/.default"
 
 
 def build_mssql_url(server: str, database: str) -> str:
@@ -29,6 +31,20 @@ def build_mssql_url(server: str, database: str) -> str:
         "Encrypt=yes;TrustServerCertificate=yes"
     )
     return "mssql+pyodbc:///?odbc_connect=" + quote_plus(odbc)
+
+
+def build_postgres_url(host: str, database: str, user: str, sslmode: str = "require") -> str:
+    """Build a SQLAlchemy ``postgresql+psycopg`` URL for `host`/`database`/`user`.
+
+    No password is embedded — pair it with ``get_engine(url, mi_client_id=...)``
+    so a managed-identity Entra token is injected as the libpq password per
+    connect (Azure Database for PostgreSQL Entra auth). The geology stack uses
+    this for Alembic migrations as the admin identity. Requires the ``postgres``
+    extra (``psycopg``).
+    """
+    if not host or not database or not user:
+        raise ValueError("host, database and user are required")
+    return f"postgresql+psycopg://{quote_plus(user)}@{host}/{database}?sslmode={sslmode}"
 
 
 def _attach_managed_identity_token(engine: Engine, client_id: str) -> None:
@@ -54,21 +70,42 @@ def _attach_managed_identity_token(engine: Engine, client_id: str) -> None:
         }
 
 
+def _attach_pg_managed_identity_token(engine: Engine, client_id: str) -> None:
+    """Inject an Entra access token as the libpq password on every connect for a
+    user-assigned managed identity (Azure Database for PostgreSQL Entra auth).
+
+    azure-identity caches and refreshes the token, so fetching per connect is
+    cheap and never stale — and a static URL password would expire hourly.
+    ``azure-identity`` is an optional dependency: install
+    ``woodard-module-helpers[postgres]``.
+    """
+    from azure.identity import ManagedIdentityCredential
+
+    credential = ManagedIdentityCredential(client_id=client_id)
+
+    @event.listens_for(engine, "do_connect")
+    def _provide_token(dialect, conn_rec, cargs, cparams):
+        cparams["password"] = credential.get_token(_OSSRDBMS_SCOPE).token
+
+
 @lru_cache(maxsize=16)
 def get_engine(database_url: str, mi_client_id: str = "") -> Engine:
     """Return a cached SQLAlchemy Engine for `database_url`.
 
     Same args → same engine (caches up to 16, above any realistic per-module
-    need). For SQL Server with a user-assigned managed identity, pass
-    `mi_client_id` (and an ``mssql+pyodbc`` URL — see `build_mssql_url`): the
-    engine then injects a fresh Entra access token on every connect. For SQLite
-    and other URLs, omit it and auth is whatever the URL specifies.
+    need). With a user-assigned managed identity (`mi_client_id`), the engine
+    injects a fresh Entra access token on every connect: as the access-token
+    attribute for ``mssql+pyodbc`` URLs (see `build_mssql_url`), or as the libpq
+    password for ``postgresql`` URLs (see `build_postgres_url`). For SQLite and
+    other URLs, omit it and auth is whatever the URL specifies.
     """
     if not database_url:
         raise ValueError("database_url is required")
     engine = create_engine(database_url, pool_pre_ping=True, future=True)
     if mi_client_id and database_url.startswith("mssql"):
         _attach_managed_identity_token(engine, mi_client_id)
+    elif mi_client_id and database_url.startswith("postgresql"):
+        _attach_pg_managed_identity_token(engine, mi_client_id)
     return engine
 
 

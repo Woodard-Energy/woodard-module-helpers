@@ -1,6 +1,6 @@
 [project]
 name = "woodard-module-helpers"
-version = "1.2.0"
+version = "1.3.0"
 description = "Shared library for Woodard Intelligence Platform modules (auth, settings, db, testing fixtures)"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -17,6 +17,13 @@ dependencies = [
 # Write-back to a SQL Server warehouse via managed identity (see data-storage-patterns).
 mssql = [
     "pyodbc>=5.1",
+    "azure-identity>=1.19",
+    "alembic>=1.13",
+]
+# Write-back / Alembic migrations against Azure Database for PostgreSQL via
+# managed identity (see the geology stack).
+postgres = [
+    "psycopg[binary]>=3.1",
     "azure-identity>=1.19",
     "alembic>=1.13",
 ]
