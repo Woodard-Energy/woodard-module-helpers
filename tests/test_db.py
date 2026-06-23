@@ -3,6 +3,7 @@ from sqlalchemy import Column, Integer, String, text
 
 from woodard_module_helpers.db import (
     build_mssql_url,
+    build_postgres_url,
     get_engine,
     get_session,
     session_dep,
@@ -165,3 +166,69 @@ def test_get_engine_routes_mssql_urls_to_token_attach(monkeypatch):
     assert attached == []  # non-mssql → no token attach
 
     db_mod.get_engine.cache_clear()  # leave the cache clean for other tests
+
+
+def test_build_postgres_url_embeds_user_host_db_sslmode():
+    url = build_postgres_url("pg.example.com", "ogmanager_dev", "mi-postgres")
+    assert url == "postgresql+psycopg://mi-postgres@pg.example.com/ogmanager_dev?sslmode=require"
+
+
+def test_build_postgres_url_requires_all_args():
+    with pytest.raises(ValueError):
+        build_postgres_url("", "db", "user")
+    with pytest.raises(ValueError):
+        build_postgres_url("host", "", "user")
+    with pytest.raises(ValueError):
+        build_postgres_url("host", "db", "")
+
+
+def test_attach_pg_managed_identity_token_constructs_credential_and_listener(monkeypatch):
+    """_attach_pg wires ManagedIdentityCredential(client_id=...) and registers a
+    do_connect listener — verified on a sqlite engine so no psycopg/azure deps
+    are needed. Connect-time password injection is verified live on the VM."""
+    import sys
+    import types
+
+    seen = {}
+
+    class _FakeCredential:
+        def __init__(self, client_id=None):
+            seen["client_id"] = client_id
+
+        def get_token(self, scope):
+            return types.SimpleNamespace(token="pgtoken")
+
+    fake_identity = types.ModuleType("azure.identity")
+    fake_identity.ManagedIdentityCredential = _FakeCredential
+    monkeypatch.setitem(sys.modules, "azure", types.ModuleType("azure"))
+    monkeypatch.setitem(sys.modules, "azure.identity", fake_identity)
+
+    from woodard_module_helpers.db import _attach_pg_managed_identity_token
+
+    engine = get_engine("sqlite:///:memory:")
+    _attach_pg_managed_identity_token(engine, "client-pg")
+    assert seen["client_id"] == "client-pg"
+
+
+def test_get_engine_routes_postgresql_urls_to_pg_token_attach(monkeypatch):
+    """get_engine attaches the PG MI token only for postgresql URLs with a client id."""
+    from woodard_module_helpers import db as db_mod
+
+    attached = []
+    monkeypatch.setattr(db_mod, "create_engine", lambda url, **kw: f"ENGINE:{url}")
+    monkeypatch.setattr(
+        db_mod,
+        "_attach_pg_managed_identity_token",
+        lambda engine, client_id: attached.append((engine, client_id)),
+    )
+
+    db_mod.get_engine.cache_clear()
+    eng = db_mod.get_engine("postgresql+psycopg://u@h/db", mi_client_id="cid-pg")
+    assert attached == [(eng, "cid-pg")]
+
+    attached.clear()
+    db_mod.get_engine.cache_clear()
+    db_mod.get_engine("sqlite:///:memory:", mi_client_id="cid-x")
+    assert attached == []  # non-postgres → no PG token attach
+
+    db_mod.get_engine.cache_clear()

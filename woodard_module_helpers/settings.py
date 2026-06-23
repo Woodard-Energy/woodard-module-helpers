@@ -29,4 +29,14 @@ class Settings(BaseSettings):
     sql_server: str = ""
     sql_database: str = ""
     sql_mi_client_id: str = ""
+    # Azure Database for PostgreSQL — Alembic migrations via managed identity
+    # (e.g. the geology stack). pg_host triggers the Postgres migration path.
+    # The admin role/identity (DDL) is deliberately separate from the app's
+    # runtime read role, so set pg_admin_* for migrations only (CI injects them);
+    # pg_schema is the module-owned schema that holds alembic_version.
+    pg_host: str = ""
+    pg_db: str = ""
+    pg_schema: str = ""
+    pg_admin_user: str = ""
+    pg_admin_mi_client_id: str = ""
     woodard_signing_secret: str = ""

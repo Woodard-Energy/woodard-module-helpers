@@ -1,8 +1,9 @@
-__version__ = "1.2.0"
+__version__ = "1.3.0"
 
 from woodard_module_helpers.db import (
     SchemaBase,
     build_mssql_url,
+    build_postgres_url,
     get_engine,
     get_session,
     session_dep,
@@ -28,6 +29,7 @@ __all__ = [
     "compute_signature",
     "SchemaBase",
     "build_mssql_url",
+    "build_postgres_url",
     "get_engine",
     "get_session",
     "session_dep",
