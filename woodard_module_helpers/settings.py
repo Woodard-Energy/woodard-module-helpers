@@ -1,11 +1,19 @@
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     """Standard env vars injected into every module by the platform.
 
-    Defaults allow local dev without any env vars set. Production values
-    come from `/etc/woodard/<slug>.<slot>.env` on the VM.
+    Defaults allow local dev without any env vars set. Production values are
+    seeded by `register-module.sh` into the per-slot env file on the VM
+    (`/opt/woodard/modules/<slug>/<slot>/.env`).
+
+    The platform injects identity as ``WOODARD_*`` (``WOODARD_SLUG``,
+    ``WOODARD_DOMAIN``, ``WOODARD_SLOT``) — see ``auth-and-deploy.md`` and
+    ``register-module.sh``. The fields below keep their ``module_*`` names so
+    module code (``settings.module_slot`` etc.) is unchanged, but they read
+    from the real ``WOODARD_*`` env vars via ``validation_alias``.
     """
 
     model_config = SettingsConfigDict(
@@ -15,9 +23,11 @@ class Settings(BaseSettings):
         case_sensitive=False,
     )
 
-    module_name: str = ""
-    module_domain: str = ""
-    module_slot: str = "dev"
+    # ``module_name`` resolves to the slug (``<domain>-<name>``); the platform
+    # injects no bare-name var, so ``WOODARD_SLUG`` is the only identity string.
+    module_name: str = Field("", validation_alias="WOODARD_SLUG")
+    module_domain: str = Field("", validation_alias="WOODARD_DOMAIN")
+    module_slot: str = Field("dev", validation_alias="WOODARD_SLOT")
     forwarded_prefix: str = ""
     port: int = 8000
     database_url: str = ""
