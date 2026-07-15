@@ -41,6 +41,20 @@ def test_settings_reads_platform_woodard_env(monkeypatch):
     assert s.woodard_signing_secret == "s3cret"
 
 
+def test_settings_constructible_via_field_name_kwargs(monkeypatch):
+    # module_name/module_domain carry a validation_alias (WOODARD_SLUG /
+    # WOODARD_DOMAIN) for env-var population, but callers (e.g. tests) must
+    # also be able to construct Settings directly by field name — required
+    # for load_config()'s test harness and any programmatic construction.
+    for k in ["WOODARD_SLUG", "WOODARD_DOMAIN", "WOODARD_SLOT"]:
+        monkeypatch.delenv(k, raising=False)
+    s = Settings(module_domain="reservoir", module_name="reservoir-model-optimizer",
+                 module_slot="dev")
+    assert s.module_domain == "reservoir"
+    assert s.module_name == "reservoir-model-optimizer"
+    assert s.module_slot == "dev"
+
+
 def test_legacy_module_env_is_ignored(monkeypatch):
     # MODULE_* is the specced-but-never-wired convention; it must NOT leak in.
     for k in ["WOODARD_SLOT", "WOODARD_DOMAIN", "WOODARD_SLUG"]:
