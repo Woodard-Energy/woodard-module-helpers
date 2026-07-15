@@ -1,6 +1,14 @@
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# Field-name -> WOODARD_* alias, used by Settings.__init__ below to allow
+# direct/programmatic construction by field name.
+_ALIAS_MAP = {
+    "module_name": "WOODARD_SLUG",
+    "module_domain": "WOODARD_DOMAIN",
+    "module_slot": "WOODARD_SLOT",
+}
+
 
 class Settings(BaseSettings):
     """Standard env vars injected into every module by the platform.
@@ -50,3 +58,21 @@ class Settings(BaseSettings):
     pg_admin_user: str = ""
     pg_admin_mi_client_id: str = ""
     woodard_signing_secret: str = ""
+    # Base URL of the platform shell, for the startup config fetch
+    # (load_config). Modules run on the same VM as the shell, so the
+    # default loopback works everywhere on the platform.
+    shell_url: str = "http://127.0.0.1:8080"
+
+    # NOTE: deliberately NOT using populate_by_name=True on model_config. In
+    # pydantic-settings, that flag also widens *env-var* matching to the
+    # plain field name (case-insensitively) — e.g. it would make a
+    # `MODULE_SLOT` env var populate `module_slot` again, reopening the
+    # legacy-env leak fixed by test_legacy_module_env_is_ignored. Instead,
+    # __init__ remaps field-name kwargs onto their WOODARD_* alias before
+    # delegating, so direct construction (Settings(module_domain=...)) works
+    # for tests/programmatic callers without touching env resolution.
+    def __init__(self, **data):
+        for field_name, alias in _ALIAS_MAP.items():
+            if field_name in data and alias not in data:
+                data[alias] = data.pop(field_name)
+        super().__init__(**data)

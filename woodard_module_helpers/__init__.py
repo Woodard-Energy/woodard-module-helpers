@@ -1,5 +1,6 @@
-__version__ = "1.4.0"
+__version__ = "1.5.0"
 
+from woodard_module_helpers.config import load_config
 from woodard_module_helpers.db import (
     SchemaBase,
     build_mssql_url,
@@ -35,6 +36,7 @@ __all__ = [
     "session_dep",
     "run_migrations",
     "upgrade_head",
+    "load_config",
     # signed_identity_headers is available via woodard_module_helpers.testing
     # (not re-exported here to avoid a pytest hard-dependency at runtime)
 ]

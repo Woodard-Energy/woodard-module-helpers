@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.5.0 — 2026-07-15
+- `load_config()`: fetch merged tunable config (config.yaml defaults +
+  dev-hub overrides) from the shell at startup; fail-open to local defaults.
+- `Settings.shell_url` (env `SHELL_URL`), default `http://127.0.0.1:8080`.
+
 ## 0.3.0 — 2026-05-01
 
 ### Added
