@@ -5,13 +5,17 @@ from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 
 from woodard_module_helpers.identity import (
+    compute_capability_signature,
     compute_signature,
     current_user,
+    require_any_capability,
     require_any_role,
+    require_capability,
     require_role,
 )
 
 SECRET = "test-secret"
+MODULE_SLUG = "operations-cost-tracker"  # this module's own WOODARD_SLUG, for tests
 
 
 def _hdrs(email: str, roles: list[str], secret: str = SECRET) -> dict[str, str]:
@@ -20,6 +24,39 @@ def _hdrs(email: str, roles: list[str], secret: str = SECRET) -> dict[str, str]:
         "X-Woodard-User": email,
         "X-Woodard-Roles": ",".join(roles),
         "X-Woodard-Signature": sig,
+    }
+
+
+def _hdrs5(
+    email: str,
+    roles: list[str],
+    *,
+    user_id: int,
+    display_name: str,
+    secret: str = SECRET,
+) -> dict[str, str]:
+    """Build the 5-header identity set (post-Entra shell shape)."""
+    sig = compute_signature(email, roles, secret, user_id=user_id, display_name=display_name)
+    return {
+        "X-Woodard-User": email,
+        "X-Woodard-User-Id": str(user_id),
+        "X-Woodard-Display-Name": display_name,
+        "X-Woodard-Roles": ",".join(sorted(roles)),
+        "X-Woodard-Signature": sig,
+    }
+
+
+def _cap_hdrs(
+    email: str,
+    user_id: int,
+    capabilities: list[str],
+    module_slug: str = MODULE_SLUG,
+    secret: str = SECRET,
+) -> dict[str, str]:
+    sig = compute_capability_signature(email, user_id, module_slug, capabilities, secret)
+    return {
+        "X-Woodard-Capabilities": ",".join(sorted(capabilities)),
+        "X-Woodard-Capabilities-Signature": sig,
     }
 
 
@@ -48,6 +85,25 @@ def _build_app():
     def reservoir_or_land():
         return {"ok": True}
 
+    @app.get("/truman-enter", dependencies=[Depends(require_capability("truman:enter"))])  # noqa: B008
+    def truman_enter():
+        return {"ok": True}
+
+    @app.get(
+        "/truman-any",
+        dependencies=[Depends(require_any_capability("truman:enter", "truman:manage"))],  # noqa: B008
+    )
+    def truman_any():
+        return {"ok": True}
+
+    @app.get("/empty-capability", dependencies=[Depends(require_capability(""))])  # noqa: B008
+    def empty_capability():
+        return {"ok": True}
+
+    @app.get("/empty-any-capability", dependencies=[Depends(require_any_capability())])  # noqa: B008
+    def empty_any_capability():
+        return {"ok": True}
+
     return app
 
 
@@ -61,6 +117,7 @@ def test_valid_signature_returns_user(monkeypatch):
         "user_id": 0,
         "display_name": "alice@example.com",
         "roles": ["reservoir"],
+        "capabilities": [],
     }
 
 
@@ -76,6 +133,7 @@ def test_tampered_signature_returns_anonymous(monkeypatch):
         "user_id": 0,
         "display_name": "anonymous",
         "roles": [],
+        "capabilities": [],
     }
 
 
@@ -90,6 +148,7 @@ def test_missing_secret_returns_anonymous(monkeypatch):
         "user_id": 0,
         "display_name": "anonymous",
         "roles": ["*"],
+        "capabilities": ["*"],
     }
 
 
@@ -103,6 +162,7 @@ def test_missing_headers_returns_anonymous(monkeypatch):
         "user_id": 0,
         "display_name": "anonymous",
         "roles": [],
+        "capabilities": [],
     }
 
 
@@ -191,8 +251,11 @@ def test_compute_signature_5_field_new() -> None:
 def test_compute_signature_3_field_when_extras_none() -> None:
     """Passing user_id=None, display_name=None falls back to legacy 3-field."""
     sig_a = compute_signature(
-        email="x@y.z", roles=["a"], secret="s",
-        user_id=None, display_name=None,
+        email="x@y.z",
+        roles=["a"],
+        secret="s",
+        user_id=None,
+        display_name=None,
     )
     sig_b = compute_signature(email="x@y.z", roles=["a"], secret="s")
     assert sig_a == sig_b
@@ -201,7 +264,10 @@ def test_compute_signature_3_field_when_extras_none() -> None:
 def test_compute_signature_falls_back_to_legacy_when_only_user_id_given() -> None:
     """Half-given (only user_id, no display_name) -> legacy 3-header path."""
     sig = compute_signature(
-        email="x@y.z", roles=["a"], secret="s", user_id=42,
+        email="x@y.z",
+        roles=["a"],
+        secret="s",
+        user_id=42,
     )
     legacy = compute_signature(email="x@y.z", roles=["a"], secret="s")
     assert sig == legacy
@@ -210,7 +276,10 @@ def test_compute_signature_falls_back_to_legacy_when_only_user_id_given() -> Non
 def test_compute_signature_falls_back_to_legacy_when_only_display_name_given() -> None:
     """Half-given (only display_name, no user_id) -> legacy 3-header path."""
     sig = compute_signature(
-        email="x@y.z", roles=["a"], secret="s", display_name="X Y",
+        email="x@y.z",
+        roles=["a"],
+        secret="s",
+        display_name="X Y",
     )
     legacy = compute_signature(email="x@y.z", roles=["a"], secret="s")
     assert sig == legacy
@@ -251,6 +320,7 @@ def test_current_user_5_header_returns_full_dict(monkeypatch) -> None:
         "user_id": 42,
         "display_name": "Jesse Hopper",
         "roles": ["admin", "operator"],
+        "capabilities": [],
     }
 
 
@@ -274,7 +344,7 @@ def test_current_user_3_header_legacy_still_works(monkeypatch) -> None:
     # Legacy mode: user_id and display_name fall back to safe defaults.
     assert body["email"] == "legacy@woodardenergy.com"
     assert body["roles"] == ["admin"]
-    assert body["user_id"] == 0          # sentinel for "no shell user_id provided"
+    assert body["user_id"] == 0  # sentinel for "no shell user_id provided"
     assert body["display_name"] == "legacy@woodardenergy.com"
 
 
@@ -301,7 +371,9 @@ def test_current_user_5_header_missing_user_id_falls_back_to_legacy_verify(monke
     app = _app_with_me_route()
     # Sign with legacy canonical (no user_id/display_name).
     sig = compute_signature(
-        email="x@y.z", roles=["a"], secret="test-secret",
+        email="x@y.z",
+        roles=["a"],
+        secret="test-secret",
     )
     headers = {
         "X-Woodard-User": "x@y.z",
@@ -333,3 +405,299 @@ def test_current_user_5_header_invalid_user_id_int_returns_anonymous(monkeypatch
     body = r.json()
     assert body["email"] == "anonymous"
     assert body["roles"] == []
+
+
+# --- Capabilities -----------------------------------------------------------
+
+
+def test_capabilities_header_round_trips(monkeypatch):
+    """A validly signed capabilities header round-trips into current_user()."""
+    monkeypatch.setenv("WOODARD_SIGNING_SECRET", SECRET)
+    monkeypatch.setenv("WOODARD_SLUG", MODULE_SLUG)
+    client = TestClient(_build_app())
+    identity_hdrs = _hdrs5("alice@example.com", ["reservoir"], user_id=1, display_name="Alice")
+    cap_hdrs = _cap_hdrs("alice@example.com", 1, ["truman:enter", "truman:manage"])
+    r = client.get("/me", headers={**identity_hdrs, **cap_hdrs})
+    assert r.status_code == 200
+    body = r.json()
+    assert sorted(body["capabilities"]) == ["truman:enter", "truman:manage"]
+    # Identity fields are untouched by the presence of capability headers.
+    assert body["email"] == "alice@example.com"
+    assert body["user_id"] == 1
+    assert body["roles"] == ["reservoir"]
+
+
+def test_capabilities_signed_for_one_user_rejected_with_different_identity(monkeypatch):
+    """The replay case: a capabilities header signed for user A, presented
+    alongside user B's (independently, validly signed) identity headers, must
+    be rejected. This is the test that justifies binding the capability
+    signature to email/user_id — without it this would verify and B would
+    inherit A's capabilities."""
+    monkeypatch.setenv("WOODARD_SIGNING_SECRET", SECRET)
+    monkeypatch.setenv("WOODARD_SLUG", MODULE_SLUG)
+    client = TestClient(_build_app())
+    # Capabilities signed for alice (user_id=1).
+    cap_hdrs = _cap_hdrs("alice@example.com", 1, ["truman:manage"])
+    # Presented with bob's (user_id=2) validly signed identity headers.
+    identity_hdrs = _hdrs5("bob@example.com", ["reservoir"], user_id=2, display_name="Bob")
+    r = client.get("/me", headers={**identity_hdrs, **cap_hdrs})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["email"] == "bob@example.com"  # identity itself still verifies
+    assert body["capabilities"] == []
+
+
+def test_capabilities_rejected_when_signed_for_a_different_module(monkeypatch):
+    """The cross-module replay case: a capabilities header correctly signed
+    (right email, right user_id) for module `drilling-well-card`, presented
+    to a module whose own WOODARD_SLUG is `operations-cost-tracker`, must be
+    rejected. This is the test that justifies binding the capability
+    signature to module_slug — without it, a header captured from one
+    module's request would verify at any other module."""
+    monkeypatch.setenv("WOODARD_SIGNING_SECRET", SECRET)
+    monkeypatch.setenv("WOODARD_SLUG", MODULE_SLUG)  # this module is operations-cost-tracker
+    client = TestClient(_build_app())
+    identity_hdrs = _hdrs5("alice@example.com", ["reservoir"], user_id=1, display_name="Alice")
+    cap_hdrs = _cap_hdrs(
+        "alice@example.com", 1, ["truman:manage"], module_slug="drilling-well-card"
+    )
+    r = client.get("/me", headers={**identity_hdrs, **cap_hdrs})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["email"] == "alice@example.com"  # identity itself still verifies
+    assert body["capabilities"] == []
+
+
+def test_capabilities_rejected_when_module_slug_unset(monkeypatch):
+    """Edge case: WOODARD_SLUG unset (bare local dev without the platform).
+    A correctly-signed capabilities header must NOT be trusted just because
+    there's nothing to compare it against — that would be an accidental
+    bypass. Distinct from the dev-wildcard path, which is gated on
+    WOODARD_SIGNING_SECRET, not WOODARD_SLUG; the secret IS set here."""
+    monkeypatch.setenv("WOODARD_SIGNING_SECRET", SECRET)
+    monkeypatch.delenv("WOODARD_SLUG", raising=False)
+    client = TestClient(_build_app())
+    identity_hdrs = _hdrs5("alice@example.com", ["reservoir"], user_id=1, display_name="Alice")
+    # Signed with an empty module_slug too — even a header that "matches" the
+    # unset slug must not be trusted.
+    cap_hdrs = _cap_hdrs("alice@example.com", 1, ["truman:manage"], module_slug="")
+    r = client.get("/me", headers={**identity_hdrs, **cap_hdrs})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["email"] == "alice@example.com"
+    assert body["capabilities"] == []
+
+
+def test_capabilities_tampered_signature_yields_empty_list(monkeypatch):
+    monkeypatch.setenv("WOODARD_SIGNING_SECRET", SECRET)
+    monkeypatch.setenv("WOODARD_SLUG", MODULE_SLUG)
+    client = TestClient(_build_app())
+    identity_hdrs = _hdrs5("alice@example.com", ["reservoir"], user_id=1, display_name="Alice")
+    cap_hdrs = _cap_hdrs("alice@example.com", 1, ["truman:manage"])
+    cap_hdrs["X-Woodard-Capabilities-Signature"] = "0" * 64
+    r = client.get("/me", headers={**identity_hdrs, **cap_hdrs})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["capabilities"] == []
+    assert body["email"] == "alice@example.com"  # request still proceeds, not a 500
+
+
+def test_capabilities_header_without_signature_yields_empty_list(monkeypatch):
+    monkeypatch.setenv("WOODARD_SIGNING_SECRET", SECRET)
+    monkeypatch.setenv("WOODARD_SLUG", MODULE_SLUG)
+    client = TestClient(_build_app())
+    identity_hdrs = _hdrs5("alice@example.com", ["reservoir"], user_id=1, display_name="Alice")
+    r = client.get("/me", headers={**identity_hdrs, "X-Woodard-Capabilities": "truman:enter"})
+    assert r.status_code == 200
+    assert r.json()["capabilities"] == []
+
+
+def test_capabilities_signature_without_header_yields_empty_list(monkeypatch):
+    monkeypatch.setenv("WOODARD_SIGNING_SECRET", SECRET)
+    monkeypatch.setenv("WOODARD_SLUG", MODULE_SLUG)
+    client = TestClient(_build_app())
+    identity_hdrs = _hdrs5("alice@example.com", ["reservoir"], user_id=1, display_name="Alice")
+    sig = compute_capability_signature(
+        "alice@example.com", 1, MODULE_SLUG, ["truman:enter"], SECRET
+    )
+    r = client.get("/me", headers={**identity_hdrs, "X-Woodard-Capabilities-Signature": sig})
+    assert r.status_code == 200
+    assert r.json()["capabilities"] == []
+
+
+def test_capabilities_absent_headers_yield_empty_list_identity_unaffected(monkeypatch):
+    """Absent capability headers → capabilities: [] and every other field is
+    byte-identical to what 1.5.0 returned."""
+    monkeypatch.setenv("WOODARD_SIGNING_SECRET", SECRET)
+    monkeypatch.setenv("WOODARD_SLUG", MODULE_SLUG)
+    client = TestClient(_build_app())
+    r = client.get("/me", headers=_hdrs("alice@example.com", ["reservoir"]))
+    assert r.status_code == 200
+    assert r.json() == {
+        "email": "alice@example.com",
+        "user_id": 0,
+        "display_name": "alice@example.com",
+        "roles": ["reservoir"],
+        "capabilities": [],
+    }
+
+
+def test_capabilities_dev_wildcard(monkeypatch):
+    """No signing secret (local dev) → capabilities: ["*"], matching roles."""
+    monkeypatch.delenv("WOODARD_SIGNING_SECRET", raising=False)
+    client = TestClient(_build_app())
+    r = client.get("/me", headers=_hdrs("alice@example.com", ["reservoir"]))
+    assert r.status_code == 200
+    assert r.json()["capabilities"] == ["*"]
+
+
+def test_compute_capability_signature_binds_email_and_user_id():
+    """Same capabilities, different user_id → different signature."""
+    sig_a = compute_capability_signature(
+        "alice@example.com", 1, MODULE_SLUG, ["truman:enter"], SECRET
+    )
+    sig_b = compute_capability_signature(
+        "alice@example.com", 2, MODULE_SLUG, ["truman:enter"], SECRET
+    )
+    assert sig_a != sig_b
+
+
+def test_compute_capability_signature_binds_module_slug():
+    """Same email/user_id/capabilities, different module_slug → different signature."""
+    sig_a = compute_capability_signature(
+        "alice@example.com", 1, "drilling-well-card", ["truman:enter"], SECRET
+    )
+    sig_b = compute_capability_signature(
+        "alice@example.com", 1, "operations-cost-tracker", ["truman:enter"], SECRET
+    )
+    assert sig_a != sig_b
+
+
+def test_compute_capability_signature_order_independent():
+    """Capability list order doesn't affect the signature (canonical = sorted)."""
+    sig_a = compute_capability_signature("a@b.c", 1, MODULE_SLUG, ["z:z", "a:a"], SECRET)
+    sig_b = compute_capability_signature("a@b.c", 1, MODULE_SLUG, ["a:a", "z:z"], SECRET)
+    assert sig_a == sig_b
+
+
+# --- require_capability / require_any_capability ----------------------------
+
+
+def test_require_capability_allows_matching(monkeypatch):
+    monkeypatch.setenv("WOODARD_SIGNING_SECRET", SECRET)
+    monkeypatch.setenv("WOODARD_SLUG", MODULE_SLUG)
+    client = TestClient(_build_app())
+    identity_hdrs = _hdrs5("alice@example.com", ["reservoir"], user_id=1, display_name="Alice")
+    cap_hdrs = _cap_hdrs("alice@example.com", 1, ["truman:enter"])
+    r = client.get("/truman-enter", headers={**identity_hdrs, **cap_hdrs})
+    assert r.status_code == 200
+
+
+def test_require_capability_denies_missing(monkeypatch):
+    monkeypatch.setenv("WOODARD_SIGNING_SECRET", SECRET)
+    monkeypatch.setenv("WOODARD_SLUG", MODULE_SLUG)
+    client = TestClient(_build_app())
+    identity_hdrs = _hdrs5("alice@example.com", ["reservoir"], user_id=1, display_name="Alice")
+    cap_hdrs = _cap_hdrs("alice@example.com", 1, ["truman:manage"])
+    r = client.get("/truman-enter", headers={**identity_hdrs, **cap_hdrs})
+    assert r.status_code == 403
+
+
+def test_require_capability_denies_when_none_held(monkeypatch):
+    monkeypatch.setenv("WOODARD_SIGNING_SECRET", SECRET)
+    monkeypatch.setenv("WOODARD_SLUG", MODULE_SLUG)
+    client = TestClient(_build_app())
+    identity_hdrs = _hdrs5("alice@example.com", ["reservoir"], user_id=1, display_name="Alice")
+    r = client.get("/truman-enter", headers=identity_hdrs)
+    assert r.status_code == 403
+
+
+def test_require_capability_allows_admin_role_without_capability(monkeypatch):
+    """The `admin` role bypasses capability checks even with zero capabilities."""
+    monkeypatch.setenv("WOODARD_SIGNING_SECRET", SECRET)
+    monkeypatch.setenv("WOODARD_SLUG", MODULE_SLUG)
+    client = TestClient(_build_app())
+    identity_hdrs = _hdrs5("alice@example.com", ["admin"], user_id=1, display_name="Alice")
+    r = client.get("/truman-enter", headers=identity_hdrs)
+    assert r.status_code == 200
+
+
+def test_require_capability_allows_dev_wildcard(monkeypatch):
+    monkeypatch.delenv("WOODARD_SIGNING_SECRET", raising=False)
+    client = TestClient(_build_app())
+    r = client.get("/truman-enter", headers=_hdrs("alice@example.com", ["reservoir"]))
+    assert r.status_code == 200
+
+
+def test_require_capability_denies_empty_argument_even_for_admin(monkeypatch):
+    """Deny by default: a falsy capability argument denies regardless of role."""
+    monkeypatch.setenv("WOODARD_SIGNING_SECRET", SECRET)
+    monkeypatch.setenv("WOODARD_SLUG", MODULE_SLUG)
+    client = TestClient(_build_app())
+    identity_hdrs = _hdrs5("alice@example.com", ["admin"], user_id=1, display_name="Alice")
+    r = client.get("/empty-capability", headers=identity_hdrs)
+    assert r.status_code == 403
+
+
+def test_require_capability_denies_empty_argument_for_wildcard(monkeypatch):
+    monkeypatch.delenv("WOODARD_SIGNING_SECRET", raising=False)
+    client = TestClient(_build_app())
+    r = client.get("/empty-capability", headers=_hdrs("alice@example.com", ["reservoir"]))
+    assert r.status_code == 403
+
+
+def test_require_any_capability_allows_either(monkeypatch):
+    monkeypatch.setenv("WOODARD_SIGNING_SECRET", SECRET)
+    monkeypatch.setenv("WOODARD_SLUG", MODULE_SLUG)
+    client = TestClient(_build_app())
+    identity_hdrs = _hdrs5("alice@example.com", ["reservoir"], user_id=1, display_name="Alice")
+    cap_hdrs = _cap_hdrs("alice@example.com", 1, ["truman:manage"])
+    r = client.get("/truman-any", headers={**identity_hdrs, **cap_hdrs})
+    assert r.status_code == 200
+
+
+def test_require_any_capability_denies_missing(monkeypatch):
+    monkeypatch.setenv("WOODARD_SIGNING_SECRET", SECRET)
+    monkeypatch.setenv("WOODARD_SLUG", MODULE_SLUG)
+    client = TestClient(_build_app())
+    identity_hdrs = _hdrs5("alice@example.com", ["reservoir"], user_id=1, display_name="Alice")
+    cap_hdrs = _cap_hdrs("alice@example.com", 1, ["other:thing"])
+    r = client.get("/truman-any", headers={**identity_hdrs, **cap_hdrs})
+    assert r.status_code == 403
+
+
+def test_require_any_capability_denies_empty_args_even_for_admin(monkeypatch):
+    monkeypatch.setenv("WOODARD_SIGNING_SECRET", SECRET)
+    monkeypatch.setenv("WOODARD_SLUG", MODULE_SLUG)
+    client = TestClient(_build_app())
+    identity_hdrs = _hdrs5("alice@example.com", ["admin"], user_id=1, display_name="Alice")
+    r = client.get("/empty-any-capability", headers=identity_hdrs)
+    assert r.status_code == 403
+
+
+def test_require_role_unaffected_by_capability_headers(monkeypatch):
+    """An existing require_role caller is unaffected by capability headers
+    riding along on the same request."""
+    monkeypatch.setenv("WOODARD_SIGNING_SECRET", SECRET)
+    monkeypatch.setenv("WOODARD_SLUG", MODULE_SLUG)
+    client = TestClient(_build_app())
+    identity_hdrs = _hdrs5("alice@example.com", ["reservoir"], user_id=1, display_name="Alice")
+    cap_hdrs = _cap_hdrs("alice@example.com", 1, ["truman:enter"])
+    r = client.get("/reservoir-only", headers={**identity_hdrs, **cap_hdrs})
+    assert r.status_code == 200
+
+
+def test_current_user_unaffected_by_capability_headers_when_role_only_consumed(monkeypatch):
+    """An existing current_user caller that never reads `capabilities` still
+    gets everything it read before, unchanged."""
+    monkeypatch.setenv("WOODARD_SIGNING_SECRET", SECRET)
+    monkeypatch.setenv("WOODARD_SLUG", MODULE_SLUG)
+    client = TestClient(_build_app())
+    identity_hdrs = _hdrs5("alice@example.com", ["reservoir"], user_id=1, display_name="Alice")
+    cap_hdrs = _cap_hdrs("alice@example.com", 1, ["truman:enter"])
+    r = client.get("/me", headers={**identity_hdrs, **cap_hdrs})
+    body = r.json()
+    assert body["email"] == "alice@example.com"
+    assert body["user_id"] == 1
+    assert body["display_name"] == "Alice"
+    assert body["roles"] == ["reservoir"]
