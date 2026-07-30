@@ -1,4 +1,4 @@
-__version__ = "1.6.0"
+__version__ = "1.6.1"
 
 from woodard_module_helpers.config import load_config
 from woodard_module_helpers.db import (
@@ -13,6 +13,8 @@ from woodard_module_helpers.identity import (
     compute_capability_signature,
     compute_signature,
     current_user,
+    has_any_capability,
+    has_capability,
     require_any_capability,
     require_any_role,
     require_capability,
@@ -32,6 +34,8 @@ __all__ = [
     "require_any_role",
     "require_capability",
     "require_any_capability",
+    "has_capability",
+    "has_any_capability",
     "compute_signature",
     "compute_capability_signature",
     "SchemaBase",
