@@ -16,9 +16,7 @@ def test_signed_identity_headers_produces_valid_signature(monkeypatch):
         return u
 
     client = TestClient(app)
-    hdrs = signed_identity_headers(
-        "bob@example.com", ["drilling"], secret="test-secret"
-    )
+    hdrs = signed_identity_headers("bob@example.com", ["drilling"], secret="test-secret")
     r = client.get("/me", headers=hdrs)
     assert r.status_code == 200
     assert r.json() == {
@@ -26,6 +24,7 @@ def test_signed_identity_headers_produces_valid_signature(monkeypatch):
         "user_id": 0,
         "display_name": "bob@example.com",
         "roles": ["drilling"],
+        "capabilities": [],
     }
 
 
@@ -47,9 +46,7 @@ def test_signed_identity_headers_picks_up_env_secret(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_woodard_test_client_fixture_sends_signed_headers(
-    monkeypatch, woodard_test_client
-):
+async def test_woodard_test_client_fixture_sends_signed_headers(monkeypatch, woodard_test_client):
     monkeypatch.setenv("WOODARD_SIGNING_SECRET", "s3cret")
 
     app = FastAPI()
@@ -68,6 +65,7 @@ async def test_woodard_test_client_fixture_sends_signed_headers(
             "user_id": 0,
             "display_name": "dave@example.com",
             "roles": ["midstream"],
+            "capabilities": [],
         }
 
 
@@ -135,7 +133,9 @@ def test_signed_identity_headers_auto_user_id_and_display_name_default_none() ->
     behavior so existing tests don't silently get 5-header output.
     """
     h = signed_identity_headers(
-        email="x@y.z", roles=["a"], secret="s",
+        email="x@y.z",
+        roles=["a"],
+        secret="s",
     )
     assert "X-Woodard-User-Id" not in h
     assert "X-Woodard-Display-Name" not in h

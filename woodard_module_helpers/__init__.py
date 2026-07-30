@@ -1,4 +1,4 @@
-__version__ = "1.5.0"
+__version__ = "1.6.0"
 
 from woodard_module_helpers.config import load_config
 from woodard_module_helpers.db import (
@@ -10,9 +10,12 @@ from woodard_module_helpers.db import (
     session_dep,
 )
 from woodard_module_helpers.identity import (
+    compute_capability_signature,
     compute_signature,
     current_user,
+    require_any_capability,
     require_any_role,
+    require_capability,
     require_role,
 )
 from woodard_module_helpers.migrations import run_migrations, upgrade_head
@@ -27,7 +30,10 @@ __all__ = [
     "current_user",
     "require_role",
     "require_any_role",
+    "require_capability",
+    "require_any_capability",
     "compute_signature",
+    "compute_capability_signature",
     "SchemaBase",
     "build_mssql_url",
     "build_postgres_url",
