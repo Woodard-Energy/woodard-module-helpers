@@ -245,6 +245,53 @@ def require_any_role(*roles: str) -> Callable:
     return _require_any_role_dep
 
 
+def has_capability(user: dict, capability: str) -> bool:
+    """Pure predicate — True if `user` holds `capability`. No I/O, no 403.
+
+    This is the single place the capability rules live; `require_capability`
+    is a thin raiser on top of it. Use this directly when you need a boolean
+    rather than a route guard — e.g. a module's own authorization chokepoint
+    that also drives non-boolean decisions (visible fields, writable
+    payloads, granted scopes) and can't sensibly "raise 403" its way there.
+
+    `user` is a dict shaped like `current_user()`'s return value (at least
+    `roles` and, optionally, `capabilities`). Bypasses, mirroring the
+    platform's access model:
+
+    - the platform ``admin`` role — admins bypass capability checks per
+      access-model.md, implemented here once so every module inherits it
+      instead of re-deriving it;
+    - the dev wildcard capability ``"*"`` (same convention as wildcard roles).
+
+    Deny by default: a falsy `capability` argument (empty string, `None`)
+    always returns `False` — even for an admin or wildcard caller — so a
+    missing or blank constant fails closed instead of silently opening the
+    check. A `user` dict with no `capabilities` key (e.g. built by older
+    code) is treated as holding none, not a `KeyError`.
+    """
+    if not capability:
+        return False
+    if "admin" in user.get("roles", []):
+        return True
+    caps = user.get("capabilities", [])
+    return capability in caps or "*" in caps
+
+
+def has_any_capability(user: dict, *capabilities: str) -> bool:
+    """Pure predicate — True if `user` holds any of `capabilities`.
+
+    Same rules as `has_capability` (admin bypass, wildcard `*`, deny by
+    default): called with no `capabilities`, always returns `False`, even for
+    admin/`*`. See `has_capability` for the `user`-shape contract.
+    """
+    if not capabilities:
+        return False
+    if "admin" in user.get("roles", []):
+        return True
+    user_caps = set(user.get("capabilities", []))
+    return "*" in user_caps or bool(user_caps & set(capabilities))
+
+
 def require_capability(request: Request, capability: str) -> None:
     """Imperative capability check — call inline, raises 403 unless held.
 
@@ -256,44 +303,32 @@ def require_capability(request: Request, capability: str) -> None:
             require_capability(request, "publish-schedule")
             ...
 
-    Bypasses, mirroring the platform's access model:
-
-    - the dev wildcard capability ``"*"`` (same convention as wildcard roles);
-    - the platform ``admin`` role — admins bypass capability checks per
-      access-model.md, implemented here once so every module inherits it
-      instead of re-deriving it.
-
-    Deny by default: a falsy `capability` argument (empty string, `None`)
-    always denies — even for an admin or wildcard caller — so a missing or
-    blank constant fails closed instead of silently opening the route.
+    A thin raiser over `has_capability` — resolves `user` via `current_user`,
+    then raises `HTTPException(403)` unless `has_capability(user, capability)`
+    is `True`. All bypass/deny-by-default rules live in `has_capability`, not
+    here; see it for the full contract.
 
     Returns `None` when the capability is held; raises
     `HTTPException(403)` otherwise.
     """
+    user = current_user(request)
+    if has_capability(user, capability):
+        return
     if not capability:
         raise HTTPException(status_code=403, detail="capability required")
-    user = current_user(request)
-    if "admin" in user["roles"]:
-        return
-    caps = user.get("capabilities", [])
-    if capability in caps or "*" in caps:
-        return
     raise HTTPException(status_code=403, detail=f"capability '{capability}' required")
 
 
 def require_any_capability(request: Request, *capabilities: str) -> None:
     """Imperative capability check — 403 unless the user holds any of `capabilities`.
 
-    Same call shape as `require_capability` (inline, not `Depends(...)`), and
-    the same bypasses (wildcard `*`, `admin` role). Deny by default: called
-    with no `capabilities`, always denies, even for admin/`*`.
+    Same call shape as `require_capability` (inline, not `Depends(...)`). A
+    thin raiser over `has_any_capability` — see it for the full bypass /
+    deny-by-default contract.
     """
+    user = current_user(request)
+    if has_any_capability(user, *capabilities):
+        return
     if not capabilities:
         raise HTTPException(status_code=403, detail="capability required")
-    user = current_user(request)
-    if "admin" in user["roles"]:
-        return
-    user_caps = set(user.get("capabilities", []))
-    if "*" in user_caps or user_caps & set(capabilities):
-        return
     raise HTTPException(status_code=403, detail=f"one of {capabilities} required")

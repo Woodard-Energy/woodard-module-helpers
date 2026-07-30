@@ -10,6 +10,8 @@ def test_public_api_surface():
         "require_any_role",
         "require_capability",
         "require_any_capability",
+        "has_capability",
+        "has_any_capability",
         "compute_signature",
         "compute_capability_signature",
         "SchemaBase",

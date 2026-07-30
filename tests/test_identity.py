@@ -9,6 +9,8 @@ from woodard_module_helpers.identity import (
     compute_capability_signature,
     compute_signature,
     current_user,
+    has_any_capability,
+    has_capability,
     require_any_capability,
     require_any_role,
     require_capability,
@@ -675,6 +677,163 @@ def test_require_any_capability_denies_empty_args_even_for_admin(monkeypatch):
     identity_hdrs = _hdrs5("alice@example.com", ["admin"], user_id=1, display_name="Alice")
     r = client.get("/empty-any-capability", headers=identity_hdrs)
     assert r.status_code == 403
+
+
+# --- has_capability / has_any_capability (pure predicates) ------------------
+
+
+def test_has_capability_allows_matching():
+    user = {"roles": ["reservoir"], "capabilities": ["truman:enter"]}
+    assert has_capability(user, "truman:enter") is True
+
+
+def test_has_capability_denies_missing():
+    user = {"roles": ["reservoir"], "capabilities": ["truman:manage"]}
+    assert has_capability(user, "truman:enter") is False
+
+
+def test_has_capability_denies_when_none_held():
+    user = {"roles": ["reservoir"], "capabilities": []}
+    assert has_capability(user, "truman:enter") is False
+
+
+def test_has_capability_allows_admin_role_without_capability():
+    """The `admin` role bypasses capability checks even with zero capabilities."""
+    user = {"roles": ["admin"], "capabilities": []}
+    assert has_capability(user, "truman:enter") is True
+
+
+def test_has_capability_allows_wildcard_capability():
+    user = {"roles": ["reservoir"], "capabilities": ["*"]}
+    assert has_capability(user, "truman:enter") is True
+
+
+def test_has_capability_denies_empty_argument_even_for_admin():
+    """Deny by default: a falsy capability argument denies regardless of role."""
+    user = {"roles": ["admin"], "capabilities": ["*"]}
+    assert has_capability(user, "") is False
+
+
+def test_has_capability_missing_capabilities_key_treated_as_none_held():
+    """A `user` dict built by older code with no `capabilities` key at all
+    must not raise KeyError — it's treated as holding no capabilities."""
+    assert has_capability({"roles": ["reservoir"]}, "truman:enter") is False
+
+
+def test_has_capability_missing_capabilities_key_still_allows_admin():
+    assert has_capability({"roles": ["admin"]}, "truman:enter") is True
+
+
+def test_has_any_capability_allows_either():
+    user = {"roles": ["reservoir"], "capabilities": ["truman:manage"]}
+    assert has_any_capability(user, "truman:enter", "truman:manage") is True
+
+
+def test_has_any_capability_denies_missing():
+    user = {"roles": ["reservoir"], "capabilities": ["other:thing"]}
+    assert has_any_capability(user, "truman:enter", "truman:manage") is False
+
+
+def test_has_any_capability_denies_empty_args_even_for_admin():
+    user = {"roles": ["admin"], "capabilities": ["*"]}
+    assert has_any_capability(user) is False
+
+
+def test_has_any_capability_missing_capabilities_key_treated_as_none_held():
+    assert has_any_capability({"roles": ["reservoir"]}, "truman:enter") is False
+
+
+def test_has_any_capability_missing_capabilities_key_still_allows_admin():
+    assert has_any_capability({"roles": ["admin"]}, "truman:enter") is True
+
+
+# --- predicate/raiser agreement (discriminating) -----------------------------
+#
+# These assert has_capability/has_any_capability and require_capability/
+# require_any_capability answer the SAME question for the same inputs. They
+# are written against independently-observed outcomes (an HTTP status code
+# for the raiser, a direct boolean call for the predicate) rather than one
+# calling the other, so a future edit that changes one surface's rules
+# without changing the other's will break one of these assertions.
+
+
+def test_has_capability_and_require_capability_agree_across_scenarios(monkeypatch):
+    monkeypatch.setenv("WOODARD_SIGNING_SECRET", SECRET)
+    monkeypatch.setenv("WOODARD_SLUG", MODULE_SLUG)
+    client = TestClient(_build_app())
+
+    scenarios = [
+        # holds the capability directly
+        {
+            **_hdrs5("alice@example.com", ["reservoir"], user_id=1, display_name="Alice"),
+            **_cap_hdrs("alice@example.com", 1, ["truman:enter"]),
+        },
+        # holds a different capability only
+        {
+            **_hdrs5("alice@example.com", ["reservoir"], user_id=1, display_name="Alice"),
+            **_cap_hdrs("alice@example.com", 1, ["truman:manage"]),
+        },
+        # no capability headers at all
+        _hdrs5("alice@example.com", ["reservoir"], user_id=1, display_name="Alice"),
+        # admin role, zero capabilities -> bypass
+        _hdrs5("alice@example.com", ["admin"], user_id=1, display_name="Alice"),
+        # admin role AND the capability -> still allowed
+        {
+            **_hdrs5("alice@example.com", ["admin"], user_id=1, display_name="Alice"),
+            **_cap_hdrs("alice@example.com", 1, ["truman:enter"]),
+        },
+        # tampered identity signature -> anonymous, deny
+        {
+            **_hdrs5("alice@example.com", ["reservoir"], user_id=1, display_name="Alice"),
+            "X-Woodard-Signature": "0" * 64,
+        },
+    ]
+
+    for headers in scenarios:
+        user = client.get("/me", headers=headers).json()
+        predicate_says = has_capability(user, "truman:enter")
+        raiser_status = client.get("/truman-enter", headers=headers).status_code
+        assert predicate_says == (raiser_status == 200), (
+            f"has_capability disagreed with require_capability for user={user}: "
+            f"predicate={predicate_says}, raiser_status={raiser_status}"
+        )
+
+
+def test_has_capability_and_require_capability_agree_for_dev_wildcard(monkeypatch):
+    monkeypatch.delenv("WOODARD_SIGNING_SECRET", raising=False)
+    client = TestClient(_build_app())
+    headers = _hdrs("alice@example.com", ["reservoir"])
+    user = client.get("/me", headers=headers).json()
+    assert has_capability(user, "truman:enter") is True
+    assert client.get("/truman-enter", headers=headers).status_code == 200
+
+
+def test_has_any_capability_and_require_any_capability_agree_across_scenarios(monkeypatch):
+    monkeypatch.setenv("WOODARD_SIGNING_SECRET", SECRET)
+    monkeypatch.setenv("WOODARD_SLUG", MODULE_SLUG)
+    client = TestClient(_build_app())
+
+    scenarios = [
+        {
+            **_hdrs5("alice@example.com", ["reservoir"], user_id=1, display_name="Alice"),
+            **_cap_hdrs("alice@example.com", 1, ["truman:manage"]),
+        },
+        {
+            **_hdrs5("alice@example.com", ["reservoir"], user_id=1, display_name="Alice"),
+            **_cap_hdrs("alice@example.com", 1, ["other:thing"]),
+        },
+        _hdrs5("alice@example.com", ["admin"], user_id=1, display_name="Alice"),
+        _hdrs5("alice@example.com", ["reservoir"], user_id=1, display_name="Alice"),
+    ]
+
+    for headers in scenarios:
+        user = client.get("/me", headers=headers).json()
+        predicate_says = has_any_capability(user, "truman:enter", "truman:manage")
+        raiser_status = client.get("/truman-any", headers=headers).status_code
+        assert predicate_says == (raiser_status == 200), (
+            f"has_any_capability disagreed with require_any_capability for user={user}: "
+            f"predicate={predicate_says}, raiser_status={raiser_status}"
+        )
 
 
 def test_require_role_unaffected_by_capability_headers(monkeypatch):

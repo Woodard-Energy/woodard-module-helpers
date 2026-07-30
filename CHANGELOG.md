@@ -36,6 +36,24 @@
   a factory, one imperative, for the same kind of check — is exactly the
   "two ways to do one thing" drift this fix exists to prevent.
 
+### Added
+- `has_capability(user, capability) -> bool` / `has_any_capability(user,
+  *capabilities) -> bool` — pure predicates for callers that need a boolean,
+  not a 403: a module's own authorization chokepoint (e.g. one that also
+  drives `granted_scopes()` / `visible_fields()` / `writable_payload()`
+  decisions) can't delegate to `require_capability` because that needs a
+  `Request` it doesn't have, and re-deriving the admin/wildcard/deny-by-default
+  rules locally is exactly the drift this library exists to prevent. Take the
+  `user` dict as returned by `current_user()` — no `Request`, no I/O — and
+  apply the identical rules: `admin` role bypasses, `"*"` satisfies any
+  check, a falsy/empty/unknown capability argument denies by default, and a
+  `user` dict with no `capabilities` key (e.g. built by older code) is
+  treated as holding none rather than raising `KeyError`.
+  `require_capability` / `require_any_capability` are now thin raisers over
+  these predicates — one implementation of the rules, two surfaces (a
+  raiser for route guards, a predicate for everything else). Exported from
+  the package root alongside the others.
+
 ## 1.6.0 — 2026-07-30
 
 ### Added
