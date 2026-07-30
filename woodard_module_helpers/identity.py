@@ -245,10 +245,18 @@ def require_any_role(*roles: str) -> Callable:
     return _require_any_role_dep
 
 
-def require_capability(capability: str) -> Callable:
-    """FastAPI dependency factory — 403 unless user holds `capability`.
+def require_capability(request: Request, capability: str) -> None:
+    """Imperative capability check — call inline, raises 403 unless held.
 
-    Bypasses, mirroring `require_role` and the platform's access model:
+    Unlike `require_role` (a `Depends(...)` dependency factory), this is
+    called directly at the top of a route body with the already-injected
+    `Request`:
+
+        def publish_schedule(request: Request):
+            require_capability(request, "publish-schedule")
+            ...
+
+    Bypasses, mirroring the platform's access model:
 
     - the dev wildcard capability ``"*"`` (same convention as wildcard roles);
     - the platform ``admin`` role — admins bypass capability checks per
@@ -258,36 +266,34 @@ def require_capability(capability: str) -> Callable:
     Deny by default: a falsy `capability` argument (empty string, `None`)
     always denies — even for an admin or wildcard caller — so a missing or
     blank constant fails closed instead of silently opening the route.
+
+    Returns `None` when the capability is held; raises
+    `HTTPException(403)` otherwise.
     """
-
-    def _require_capability_dep(user: dict = Depends(current_user)) -> None:  # noqa: B008
-        if not capability:
-            raise HTTPException(status_code=403, detail="capability required")
-        if "admin" in user["roles"]:
-            return
-        caps = user.get("capabilities", [])
-        if capability in caps or "*" in caps:
-            return
-        raise HTTPException(status_code=403, detail=f"capability '{capability}' required")
-
-    return _require_capability_dep
+    if not capability:
+        raise HTTPException(status_code=403, detail="capability required")
+    user = current_user(request)
+    if "admin" in user["roles"]:
+        return
+    caps = user.get("capabilities", [])
+    if capability in caps or "*" in caps:
+        return
+    raise HTTPException(status_code=403, detail=f"capability '{capability}' required")
 
 
-def require_any_capability(*capabilities: str) -> Callable:
-    """FastAPI dependency factory — 403 unless user holds any of `capabilities`.
+def require_any_capability(request: Request, *capabilities: str) -> None:
+    """Imperative capability check — 403 unless the user holds any of `capabilities`.
 
-    Same bypasses as `require_capability` (wildcard `*`, `admin` role). Deny
-    by default: called with no arguments, always denies, even for admin/`*`.
+    Same call shape as `require_capability` (inline, not `Depends(...)`), and
+    the same bypasses (wildcard `*`, `admin` role). Deny by default: called
+    with no `capabilities`, always denies, even for admin/`*`.
     """
-
-    def _require_any_capability_dep(user: dict = Depends(current_user)) -> None:  # noqa: B008
-        if not capabilities:
-            raise HTTPException(status_code=403, detail="capability required")
-        if "admin" in user["roles"]:
-            return
-        user_caps = set(user.get("capabilities", []))
-        if "*" in user_caps or user_caps & set(capabilities):
-            return
-        raise HTTPException(status_code=403, detail=f"one of {capabilities} required")
-
-    return _require_any_capability_dep
+    if not capabilities:
+        raise HTTPException(status_code=403, detail="capability required")
+    user = current_user(request)
+    if "admin" in user["roles"]:
+        return
+    user_caps = set(user.get("capabilities", []))
+    if "*" in user_caps or user_caps & set(capabilities):
+        return
+    raise HTTPException(status_code=403, detail=f"one of {capabilities} required")

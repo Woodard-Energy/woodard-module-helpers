@@ -1,4 +1,4 @@
-__version__ = "1.6.0"
+__version__ = "1.6.1"
 
 from woodard_module_helpers.config import load_config
 from woodard_module_helpers.db import (

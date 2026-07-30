@@ -1,7 +1,8 @@
 import hashlib
 import hmac
 
-from fastapi import Depends, FastAPI
+import pytest
+from fastapi import Depends, FastAPI, Request
 from fastapi.testclient import TestClient
 
 from woodard_module_helpers.identity import (
@@ -85,23 +86,24 @@ def _build_app():
     def reservoir_or_land():
         return {"ok": True}
 
-    @app.get("/truman-enter", dependencies=[Depends(require_capability("truman:enter"))])  # noqa: B008
-    def truman_enter():
+    @app.get("/truman-enter")
+    def truman_enter(request: Request):
+        require_capability(request, "truman:enter")
         return {"ok": True}
 
-    @app.get(
-        "/truman-any",
-        dependencies=[Depends(require_any_capability("truman:enter", "truman:manage"))],  # noqa: B008
-    )
-    def truman_any():
+    @app.get("/truman-any")
+    def truman_any(request: Request):
+        require_any_capability(request, "truman:enter", "truman:manage")
         return {"ok": True}
 
-    @app.get("/empty-capability", dependencies=[Depends(require_capability(""))])  # noqa: B008
-    def empty_capability():
+    @app.get("/empty-capability")
+    def empty_capability(request: Request):
+        require_capability(request, "")
         return {"ok": True}
 
-    @app.get("/empty-any-capability", dependencies=[Depends(require_any_capability())])  # noqa: B008
-    def empty_any_capability():
+    @app.get("/empty-any-capability")
+    def empty_any_capability(request: Request):
+        require_any_capability(request)
         return {"ok": True}
 
     return app
@@ -685,6 +687,21 @@ def test_require_role_unaffected_by_capability_headers(monkeypatch):
     cap_hdrs = _cap_hdrs("alice@example.com", 1, ["truman:enter"])
     r = client.get("/reservoir-only", headers={**identity_hdrs, **cap_hdrs})
     assert r.status_code == 200
+
+
+def test_require_capability_is_imperative_not_a_dependency_factory():
+    """require_capability(request, capability) is a plain function, not a
+    Depends(...) factory like require_role. Calling it with only a
+    capability string (no request) raises TypeError — this pins the
+    documented call shape (auth-and-deploy.md) and would fail if someone
+    reverted to the v1.6.0 factory shape `require_capability(cap)`."""
+    with pytest.raises(TypeError):
+        require_capability("truman:enter")  # missing required `request` arg
+
+
+def test_require_any_capability_is_imperative_not_a_dependency_factory():
+    with pytest.raises(TypeError):
+        require_any_capability()  # missing required `request` arg
 
 
 def test_current_user_unaffected_by_capability_headers_when_role_only_consumed(monkeypatch):

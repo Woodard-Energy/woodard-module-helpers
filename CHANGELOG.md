@@ -1,5 +1,41 @@
 # Changelog
 
+## 1.6.1 — 2026-07-30
+
+### Fixed
+- **Breaking, corrects a v1.6.0 mistake before anyone adopted it:**
+  `require_capability` / `require_any_capability` shipped in 1.6.0 as FastAPI
+  dependency factories (`require_capability(cap) -> Callable`, used via
+  `Depends(...)`), but the platform's published contract for module
+  developers (`woodard-modules-workspace/docs/auth-and-deploy.md`, "Module
+  capability gating") always specified an **imperative** call:
+  `require_capability(request, capability) -> None`, called inline at the
+  top of a route body and raising `HTTPException(403)` directly — not
+  wired through `Depends(...)`. 1.6.0 shipped the wrong shape. Nothing
+  outside this repo consumed 1.6.0 yet, so this corrects the signature now
+  rather than after 16 module developers built against the (correct) docs.
+  **Do not pin `woodard-module-helpers==1.6.0` — upgrade straight to 1.6.1.**
+  New signatures:
+
+  ```python
+  def require_capability(request: Request, capability: str) -> None: ...
+  def require_any_capability(request: Request, *capabilities: str) -> None: ...
+  ```
+
+  All 1.6.0 behaviour is preserved under the new call shape: the `admin`
+  role and wildcard `"*"` capability both bypass the check, and a falsy or
+  empty capability argument always denies (even for admin/`*`). No change
+  to `current_user()`, `compute_capability_signature()`, the 5-header
+  identity payload, or `compute_signature()`.
+- The dependency-factory form was removed rather than kept alongside the
+  imperative one under a different name. `require_role` /
+  `require_any_role` keep the `Depends(...)` factory shape (they only ever
+  need the injected `user` dict); capability checks need the raw `Request`
+  to re-verify against `current_user`, and the documented contract already
+  settled on calling them inline. Shipping both shapes in one library — one
+  a factory, one imperative, for the same kind of check — is exactly the
+  "two ways to do one thing" drift this fix exists to prevent.
+
 ## 1.6.0 — 2026-07-30
 
 ### Added
