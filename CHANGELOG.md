@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.7.0 — 2026-08-26
+
+### Added
+- `submit_notification(title, *, body="", link=None, emails=None,
+  audience=None, timeout=5.0)` + `NotifyError` — submit a platform
+  notification (the topbar bell) from any module. Targets specific users
+  (`emails=[...]`) or everyone granted access to your module
+  (`audience="module"`). Uses the injected `WOODARD_SLUG` +
+  `WOODARD_SIGNING_SECRET`; optional `WOODARD_SHELL_URL` overrides the
+  shell address (default `http://127.0.0.1:8080`). Notifications are
+  best-effort by design — wrap calls in `try/except NotifyError` when the
+  caller's own request must not fail.
+
 ## 1.6.1 — 2026-07-30
 
 ### Fixed

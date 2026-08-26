@@ -989,7 +989,7 @@ wheels = [
 
 [[package]]
 name = "woodard-module-helpers"
-version = "1.6.1"
+version = "1.7.0"
 source = { editable = "." }
 dependencies = [
     { name = "fastapi" },
