@@ -93,6 +93,34 @@ engine = get_engine()   # reads DATABASE_URL from env
 from woodard_module_helpers.urls import static_url, embed_url
 ```
 
+### Notifications
+
+```python
+from woodard_module_helpers import NotifyError, submit_notification
+
+try:
+    submit_notification(
+        "Recompute finished",
+        body="Scenario Q3 acquisition — 41 wells updated.",
+        link="/reservoir/model-optimizer/projects/12",
+        emails=[user_email],
+    )
+except NotifyError:
+    log.warning("notification submit failed", exc_info=True)
+```
+
+`submit_notification(title, *, body="", link=None, emails=None,
+audience=None, timeout=5.0)` posts a platform notification (the topbar
+bell) to `{WOODARD_SHELL_URL}/_api/notify`, HMAC-signed with the injected
+`WOODARD_SIGNING_SECRET` — no extra setup for a registered module. Target
+with exactly one of `emails=[...]` (specific users; unknown emails come
+back in the result's `unresolved_emails`, not an error) or
+`audience="module"` (everyone granted access to your module). Raises
+`NotifyError` on missing env, bad targeting, transport failure, or a
+non-200 from the shell — notifications are best-effort by design, so wrap
+calls in `try/except NotifyError` when the caller's own request must not
+fail.
+
 ## Pytest plugin
 
 The package registers a `pytest11` entry point that provides the

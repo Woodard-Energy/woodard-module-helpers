@@ -19,6 +19,8 @@ def test_public_api_surface():
         "get_session",
         "session_dep",
         "load_config",
+        "NotifyError",
+        "submit_notification",
         "__version__",
     }
     missing = expected - set(dir(wmh))
