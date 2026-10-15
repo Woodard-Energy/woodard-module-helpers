@@ -1,4 +1,5 @@
 import os
+import time
 from collections.abc import Callable
 
 import httpx
@@ -57,6 +58,28 @@ def signed_identity_headers(
         "X-Woodard-Roles": ",".join(roles),
         "X-Woodard-Signature": sig,
     }
+
+
+def signed_report_headers(
+    raw: bytes, secret: str | None = None, *, ts: str | None = None,
+) -> dict[str, str]:
+    """Headers the shell sends on POST /_reports/render|scopes, for module tests.
+
+    Sign the EXACT bytes you post (json.dumps(...).encode()) — the signature
+    covers the body hash.
+    """
+    from woodard_module_helpers.reports import (
+        SIG_HEADER,
+        TS_HEADER,
+        compute_report_signature,
+    )
+
+    if secret is None:
+        secret = os.environ.get("WOODARD_SIGNING_SECRET", "")
+    if not secret:
+        raise ValueError("signed_report_headers needs a secret")
+    ts = ts or str(int(time.time()))
+    return {TS_HEADER: ts, SIG_HEADER: compute_report_signature(raw, ts, secret)}
 
 
 @pytest.fixture
