@@ -21,6 +21,15 @@ def test_public_api_surface():
         "load_config",
         "NotifyError",
         "submit_notification",
+        "report",
+        "report_scopes",
+        "report_router",
+        "RenderRequest",
+        "RenderResult",
+        "ScopeNode",
+        "Attachment",
+        "ReportError",
+        "render_email",
         "__version__",
     }
     missing = expected - set(dir(wmh))

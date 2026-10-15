@@ -989,7 +989,7 @@ wheels = [
 
 [[package]]
 name = "woodard-module-helpers"
-version = "1.7.0"
+version = "1.8.0"
 source = { editable = "." }
 dependencies = [
     { name = "fastapi" },
@@ -998,6 +998,7 @@ dependencies = [
     { name = "pydantic-settings" },
     { name = "pyyaml" },
     { name = "sqlalchemy" },
+    { name = "tzdata", marker = "sys_platform == 'win32'" },
 ]
 
 [package.optional-dependencies]
@@ -1035,6 +1036,7 @@ requires-dist = [
     { name = "pyodbc", marker = "extra == 'mssql'", specifier = ">=5.1" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "sqlalchemy", specifier = ">=2.0" },
+    { name = "tzdata", marker = "sys_platform == 'win32'", specifier = ">=2024.1" },
 ]
 provides-extras = ["mssql", "postgres"]
 
