@@ -69,6 +69,10 @@ def test_signature_rejects_stale_timestamp():
     assert not verify_report_signature(raw, ts, sig, SECRET)
 
 
+def test_signature_non_ascii_is_false_not_error():
+    assert verify_report_signature(b"{}", str(int(time.time())), "é", SECRET) is False
+
+
 def test_signature_rejects_empty_secret_and_garbage_ts():
     assert not verify_report_signature(b"{}", "123", "abc", "")
     assert not verify_report_signature(b"{}", "not-a-number", "abc", SECRET)
@@ -119,6 +123,15 @@ async def test_bad_signature_is_404():
     r = await _post(_app(reg), "/_reports/render", _render_body(),
                     headers={"X-Woodard-Report-Timestamp": str(int(time.time())),
                              "X-Woodard-Report-Signature": "deadbeef"})
+    assert r.status_code == 404
+
+
+async def test_non_ascii_signature_header_is_404():
+    reg = ReportRegistry()
+    reg.report("r1")(lambda req: RenderResult(subject="S", html="x"))
+    r = await _post(_app(reg), "/_reports/render", _render_body(),
+                    headers={"X-Woodard-Report-Timestamp": str(int(time.time())),
+                             "X-Woodard-Report-Signature": b"\xe9"})  # latin-1 on the wire
     assert r.status_code == 404
 
 

@@ -71,7 +71,9 @@ def verify_report_signature(
     current = time.time() if now is None else now
     if abs(current - ts_int) > WINDOW_S:
         return False
-    return hmac.compare_digest(compute_report_signature(raw, ts, secret), sig)
+    # Compare bytes: compare_digest(str, str) raises TypeError on non-ASCII input.
+    expected = compute_report_signature(raw, ts, secret).encode()
+    return hmac.compare_digest(expected, sig.encode("utf-8", "replace"))
 
 
 def contains_platform_link(html: str) -> bool:
