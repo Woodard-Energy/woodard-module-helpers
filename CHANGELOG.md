@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.8.0 — 2026-10-15
+
+### Added
+- Report publishing for platform report distribution: `@report(key)`,
+  `@report_scopes(dimension)`, `report_router()`, `RenderRequest`,
+  `RenderResult`, `ScopeNode`, `Attachment`, `ReportError`. Include
+  `report_router()` once in `app/main.py` and declare reports in
+  `reports.yaml`. The shell calls `POST /_reports/render|scopes`, signed with
+  `WOODARD_SIGNING_SECRET` (bad signature → 404). External renders that
+  contain platform links are refused.
+- `render_email(title=, body_html=, data_as_of=, footer=)` — email-safe
+  (hex colors, inline styles, table layout) wrapper for report bodies.
+- `woodard_module_helpers.testing.signed_report_headers(raw)` for module tests.
+
 ## 1.7.0 — 2026-08-26
 
 ### Added
