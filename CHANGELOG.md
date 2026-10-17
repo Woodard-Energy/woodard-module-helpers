@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.8.1 — 2026-10-16
+
+### Added
+- `render_email(..., max_width=640)` — a report can ask for a wider card on
+  wide screens; it stays fluid below that, so it still fits a phone.
+
+### Changed
+- The email canvas is white instead of light grey. Dark-mode clients (new
+  Outlook) recoloured the grey canvas into a mid-grey frame around the card.
+
 ## 1.8.0 — 2026-10-15
 
 ### Added
