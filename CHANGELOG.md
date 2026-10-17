@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.9.0 — 2026-10-16
+## 1.8.1 — 2026-10-16
 
 ### Added
 - `render_email(..., max_width=640)` — a report can ask for a wider card on

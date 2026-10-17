@@ -1,4 +1,4 @@
-__version__ = "1.9.0"
+__version__ = "1.8.1"
 
 from woodard_module_helpers.config import load_config
 from woodard_module_helpers.db import (
